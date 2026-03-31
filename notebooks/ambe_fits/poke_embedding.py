@@ -106,7 +106,7 @@ param_bag = aa['param_bag'] # list of dictionary of the params and values
 events_bag = aa['events_bag'] # list of array, (2, n) in shape
 
 # %%
-NUM_SAMPLES = 2000
+NUM_SAMPLES = 20000
 
 dataset = []
 params = []
@@ -128,11 +128,9 @@ _, DIM_THETA = _params.shape
 _, DIM_DATA = _events.shape
 
 # %%
-print(f'Dataset loaded with {len(dataset)} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
+print(f'Dataset loaded with {len(dataset):.0e} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
 
 # %%
-NUM_SAMPLES = 2000
-
 zzparams = []
 cnt = 0
 for _ind in range(len(events_bag)):
@@ -144,7 +142,6 @@ for _ind in range(len(events_bag)):
 
 # %%
 zzparams = np.array(zzparams)
-
 
 # %%
 for _ii in range(DIM_THETA):
