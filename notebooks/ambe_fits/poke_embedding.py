@@ -73,9 +73,6 @@ for _ in range(num_samples):
 thetas = np.concatenate(thetas, axis=0)
 
 # %%
-type(dataset), len(dataset), dataset[0]
-
-# %%
 
 # Plot the first 3 samples from the dataset to visualize the points and their centers
 fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -127,14 +124,37 @@ for _ind in range(len(events_bag)):
 # Collect all true param values for later evaluation # not sure what for, but okie
 params = np.concatenate(params, axis=0)
 
-DIM_THETA = len(_params)
+_, DIM_THETA = _params.shape
 _, DIM_DATA = _events.shape
 
 # %%
-type(dataset), len(dataset), dataset[0]
+print(f'Dataset loaded with {len(dataset)} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
 
 # %%
-DIM_THETA, DIM_DATA
+NUM_SAMPLES = 2000
+
+zzparams = []
+cnt = 0
+for _ind in range(len(events_bag)):
+    if cnt >= NUM_SAMPLES:
+        break
+    _params = [_ for _ in param_bag[_ind].values()]
+    zzparams.append(_params)
+    cnt += 1
+
+# %%
+zzparams = np.array(zzparams)
+
+
+# %%
+for _ii in range(DIM_THETA):
+    zzz = zzparams[:, _ii]
+    plt.figure()
+    plt.hist(zzz, bins=50)
+    plt.title(f'{zzz.min():.2f}, {zzz.max():.2f}')
+
+# %%
+type(dataset), len(dataset), dataset[0]
 
 # %%
 # Plot the first 3 samples from the dataset to visualize the events and their parameters
@@ -157,13 +177,8 @@ plt.tight_layout()
 plt.show()
 
 
-# %%
-
-# %%
-
-# %%
-
-# %%
+# %% [markdown]
+# ## Data loaders
 
 # %%
 # Define custom dataset and dataloaders
@@ -249,10 +264,13 @@ embedding = DeepSet(in_channels=DIM_DATA, hidden_channels=32, out_channels=8)
 embedding
 
 # %%
-# Define a uniform prior over the parameter space
+# Living lyfe dangerously, define a uniform prior over the parameter space
+low_bounds = [0.1, 15, 4000]
+high_bounds = [0.2, 20, 7000]
+
 prior = ili.utils.Uniform(
-    low=[-3] * DIM_THETA,
-    high=[3] * DIM_THETA,
+    low=low_bounds,
+    high=high_bounds,
     device=device
 )
 
@@ -289,9 +307,6 @@ runner = InferenceRunner.load(
 posterior_ensemble, summaries = runner(loader=loader)
 
 # %%
-type(posterior_ensemble)
-
-# %%
 
 # Plot training and validation log probabilities over epochs
 fig, ax = plt.subplots()
@@ -326,28 +341,57 @@ type(samples), samples.shape, log_prob.shape, samples[0]
 test = x_.x.cpu().numpy()
 plt.scatter(test[:, 0], test[:, 1], alpha=0.5, label='MC Events')
 plt.title(f'True params: {y_}')
+plt.xlabel('cS1 [PE]')
+plt.ylabel('cS2 [PE]')
 
 # %%
 dim_theta = DIM_THETA
 
 # %%
-type(samples), samples.shape, log_prob.shape
+type(samples), samples.shape
 
 # %%
-plt.hist(samples)
+for _ii in range(DIM_THETA):
+    plt.figure()
+    plt.hist(samples[:, _ii], bins=50, alpha=0.5, label=f'sample dim {_ii}')
+
 
 # %%
-# Visualize the 2D posterior samples compared to the true value
-fig, axs = plt.subplots(1, dim_theta, figsize=(3*dim_theta, 3),
-                        gridspec_kw={'width_ratios': [1]*(dim_theta-1)+[0.05]})
-if dim_theta == 2:
-    axs[0].plot(y_[0], y_[1], 'r+', markersize=10, label='true')
-    im = axs[0].scatter(samples[:, 0], samples[:, 1],
-                        c=log_prob, s=4, label='samples')
-    axs[0].set_xlabel(r'$\theta_0$')
-    axs[0].set_ylabel(r'$\theta_1$')
-    axs[0].legend()
-    plt.colorbar(im, label='log probability', use_gridspec=True, cax=axs[-1])
+from itertools import combinations
+
+# Visualize the posterior samples compared to the true value for 3D
+dim_theta = DIM_THETA
+n_combinations = dim_theta * (dim_theta - 1) // 2  # 3 choose 2 = 3
+
+# Create subplots: one for each pair combination + one colorbar
+fig, axs = plt.subplots(1, n_combinations + 1, 
+                        figsize=(3 * (n_combinations + 1), 3),
+                        gridspec_kw={'width_ratios': [1] * n_combinations + [0.05]})
+
+# Get all pair combinations of parameters
+param_pairs = list(combinations(range(dim_theta), 2))
+param_names = [r'$\theta_0$', r'$\theta_1$', r'$\theta_2$']
+
+# Plot each combination
+for idx, (i, j) in enumerate(param_pairs):
+    # Scatter plot of samples
+    im = axs[idx].scatter(samples[:, i], samples[:, j],
+                          c=log_prob, s=4, cmap='viridis')
+    axs[idx].set_xlabel(param_names[i])
+    axs[idx].set_ylabel(param_names[j])
+    axs[idx].set_title(f'{param_names[i]} vs {param_names[j]}')
+    
+    # Optional: plot the true value if you have it
+    # true_values = [true_theta0, true_theta1, true_theta2]  # define your true values
+    # axs[idx].plot(true_values[i], true_values[j], 'r+', markersize=10, label='true')
+    # axs[idx].legend()
+
+# Add colorbar to the last subplot
+plt.colorbar(im, label='log probability', cax=axs[-1])
+
+plt.tight_layout()
+plt.show()
+
 
 # %%
 
@@ -359,6 +403,9 @@ fig = metric(
     posterior=posterior_ensemble,
     x_obs=x_, theta_fid=y_
 )
+
+# %%
+thetas = params
 
 # %%
 # PosteriorCoverage
