@@ -73,6 +73,9 @@ for _ in range(num_samples):
 thetas = np.concatenate(thetas, axis=0)
 
 # %%
+type(dataset), len(dataset), dataset[0]
+
+# %%
 
 # Plot the first 3 samples from the dataset to visualize the points and their centers
 fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -92,6 +95,75 @@ for i in range(3):
 plt.tight_layout()
 plt.show()
 
+# %%
+
+# %% [markdown]
+# ## Load my apt simulations
+
+# %%
+fbase = '/home/puehlengt/appletree/notebooks/'
+fname = f'{fbase}/harvested_testsims_3params.npy'
+
+aa = np.load(fname, allow_pickle=True).item()
+param_bag = aa['param_bag'] # list of dictionary of the params and values
+events_bag = aa['events_bag'] # list of array, (2, n) in shape
+
+# %%
+NUM_SAMPLES = 2000
+
+dataset = []
+params = []
+cnt = 0
+for _ind in range(len(events_bag)):
+    if cnt >= NUM_SAMPLES:
+        break
+    _events = torch.tensor(events_bag[_ind].T)
+    _params = torch.tensor([_ for _ in param_bag[_ind].values()]).reshape(1, -1)
+
+    dataset.append(PYGData(x=_events, y=_params))
+    params.append(_params)
+    cnt += 1
+
+# Collect all true param values for later evaluation # not sure what for, but okie
+params = np.concatenate(params, axis=0)
+
+DIM_THETA = len(_params)
+_, DIM_DATA = _events.shape
+
+# %%
+type(dataset), len(dataset), dataset[0]
+
+# %%
+DIM_THETA, DIM_DATA
+
+# %%
+# Plot the first 3 samples from the dataset to visualize the events and their parameters
+fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+for i in range(3):
+    data_sample = dataset[i]
+    x_pts = data_sample.x.numpy()
+    theta_val = data_sample.y.numpy().flatten()
+
+    axes[i].scatter(x_pts[:, 0], x_pts[:, 1], alpha=0.5, label='MC Events')
+    axes[i].set_xlabel('cS1 [PE]')
+    axes[i].set_ylabel('cS2 [PE]')
+
+    #axes[i].set_xlim(-5, 5)
+    #axes[i].set_ylim(-5, 5)
+    axes[i].set_title(f'Sample {i+1}, {(len(x_pts))} events\ng1={theta_val[0]:.2f}, g2={theta_val[1]:.2f}, NR rate={theta_val[2]:.2f}')
+    if i == 0:
+        axes[i].legend()
+plt.tight_layout()
+plt.show()
+
+
+# %%
+
+# %%
+
+# %%
+
+# %%
 
 # %%
 # Define custom dataset and dataloaders
@@ -153,7 +225,7 @@ class DeepSet(nn.Module):
         )
         # Global MLP applied to the aggregated global features
         self.global_mlp = nn.Sequential(
-            nn.Linear(hidden_channels * 2, hidden_channels),
+            nn.Linear(hidden_channels * 2, hidden_channels), # cause pooling max and mean, so 2x hidden_channels
             nn.ReLU(),
             nn.Linear(hidden_channels, out_channels)
         )
@@ -171,13 +243,17 @@ class DeepSet(nn.Module):
         global_embed = torch.cat([mean_pool, max_pool], dim=1)
         return self.global_mlp(global_embed)
 
+embedding = DeepSet(in_channels=DIM_DATA, hidden_channels=32, out_channels=8)
 
-embedding = DeepSet(in_channels=2, hidden_channels=32, out_channels=8)
+# %%
+embedding
 
 # %%
 # Define a uniform prior over the parameter space
 prior = ili.utils.Uniform(
-    low=[-3] * dim_theta, high=[3] * dim_theta, device=device
+    low=[-3] * DIM_THETA,
+    high=[3] * DIM_THETA,
+    device=device
 )
 
 # Define Neural Density Estimators (NDEs) - here using Neural Spline Flows (NSF)
@@ -213,6 +289,9 @@ runner = InferenceRunner.load(
 posterior_ensemble, summaries = runner(loader=loader)
 
 # %%
+type(posterior_ensemble)
+
+# %%
 
 # Plot training and validation log probabilities over epochs
 fig, ax = plt.subplots()
@@ -224,11 +303,10 @@ ax.set_ylabel('Log probability')
 ax.legend()
 
 # %%
-
 # Select a single validation sample to evaluate
-ind = 0
+ind = 3
 val_idx = idx_val[ind]
-x_ = graph_dataset[val_idx]
+x_ = graph_dataset[val_idx] # torch_geometric.data.data.Data object lol
 # Get the true parameter values
 y_ = x_.y[0].numpy()
 
@@ -240,6 +318,23 @@ log_prob = posterior_ensemble.log_prob(samples, x_)
 
 samples = samples.cpu().numpy()
 log_prob = log_prob.cpu().numpy()
+
+# %%
+type(samples), samples.shape, log_prob.shape, samples[0]
+
+# %%
+test = x_.x.cpu().numpy()
+plt.scatter(test[:, 0], test[:, 1], alpha=0.5, label='MC Events')
+plt.title(f'True params: {y_}')
+
+# %%
+dim_theta = DIM_THETA
+
+# %%
+type(samples), samples.shape, log_prob.shape
+
+# %%
+plt.hist(samples)
 
 # %%
 # Visualize the 2D posterior samples compared to the true value
