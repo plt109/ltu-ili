@@ -25,9 +25,12 @@
 import numpy as np
 import scipy as sps
 import matplotlib.pyplot as plt
+
+# PyTorch
 import torch
 import torch.nn as nn
 from torch.utils import data
+
 # PyTorch Geometric imports for graph/set data
 from torch_geometric.data import Data as PYGData
 from torch_geometric.loader.dataloader import Collater
@@ -38,6 +41,8 @@ import ili
 from ili.dataloaders import TorchLoader
 from ili.inference import InferenceRunner
 from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
+
+import wandb
 
 # Set device for PyTorch (GPU if available, else CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
