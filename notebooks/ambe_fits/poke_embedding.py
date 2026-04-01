@@ -23,6 +23,7 @@
 
 # Standard library and deep learning imports
 import numpy as np
+import scipy as sps
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -106,7 +107,7 @@ param_bag = aa['param_bag'] # list of dictionary of the params and values
 events_bag = aa['events_bag'] # list of array, (2, n) in shape
 
 # %%
-NUM_SAMPLES = 20000
+NUM_SAMPLES = 2000
 
 dataset = []
 params = []
@@ -144,11 +145,69 @@ for _ind in range(len(events_bag)):
 zzparams = np.array(zzparams)
 
 # %%
-for _ii in range(DIM_THETA):
+apt_param_config = {"g1": {
+        "prior_type": "norm",
+        "prior_args": {
+            "mean": 0.1367,
+            "std": 0.001
+        },
+        "allowed_range": [
+            0,
+            1.0
+        ],
+        "init_mean": 0.1367,
+        "init_std": 0.001,
+        "unit": "PE/photon",
+        "doc": "g1"
+    },
+    "g2": {
+        "prior_type": "norm",
+        "prior_args": {
+            "mean": 16.85,
+            "std": 0.46
+        },
+        "allowed_range": [
+            0,
+            100.0
+        ],
+        "init_mean": 16.85,
+        "init_std": 0.46,
+        "unit": "PE/electron",
+        "doc": "g2"
+    },
+    "ambe_nr_rate": {
+        "prior_type": "free",
+        "prior_args": {},
+        "allowed_range": [
+            0,
+            10000000000.0
+        ],
+        "init_mean": 5500,
+        "init_std": 100,
+        "unit": "1",
+        "doc": "total number of events in the AmBe NR calibration"
+    }
+}
+
+# %%
+for _ii, (key, val) in enumerate(apt_param_config.items()):
     zzz = zzparams[:, _ii]
+    zzmin, zzmax = zzz.min(), zzz.max()
+    zzxx = np.linspace(zzmin, zzmax, 100)
+
+    try:
+        zzmean = val['prior_args']['mean']
+        zzstd = val['prior_args']['std']
+    except:
+        zzmean = val['init_mean']
+        zzstd = val['init_std']
+
     plt.figure()
-    plt.hist(zzz, bins=50)
-    plt.title(f'{zzz.min():.2f}, {zzz.max():.2f}')
+    plt.hist(zzz, bins=50, density=True)
+    plt.plot(zzxx, sps.stats.norm.pdf(zzxx, loc=zzmean, scale=zzstd), label='Prior PDF')
+    plt.title(f'[{zzmin:.2f}, {zzmax:.2f}]')
+    plt.xlabel(f'{key} [{val["unit"]}]')
+    plt.legend()
 
 # %%
 type(dataset), len(dataset), dataset[0]
@@ -260,16 +319,60 @@ embedding = DeepSet(in_channels=DIM_DATA, hidden_channels=32, out_channels=8)
 # %%
 embedding
 
-# %%
-# Living lyfe dangerously, define a uniform prior over the parameter space
-low_bounds = [0.1, 15, 4000]
-high_bounds = [0.2, 20, 7000]
+# %% [markdown]
+# ### Priors from apt config
 
+# %%
+means = []
+stds = []
+low_bounds = []
+high_bounds = []
+
+for param_name, param_info in apt_param_config.items():    
+    # Get mean: from prior_args if exists, otherwise from init_mean
+    if 'mean' in param_info.get('prior_args', {}):
+        mean = param_info['prior_args']['mean']
+    else:
+        mean = param_info['init_mean']
+    
+    # Get std: from prior_args if exists, otherwise from init_std
+    if 'std' in param_info.get('prior_args', {}):
+        std = param_info['prior_args']['std']
+    else:
+        std = param_info['init_std']
+    
+    # Get allowed range (truncation bounds)
+    allowed_range = param_info['allowed_range']
+    low = allowed_range[0]
+    high = allowed_range[1]
+    
+    means.append(mean)
+    stds.append(std)
+    low_bounds.append(low)
+    high_bounds.append(high)
+
+# %%
+# Option 1: Centered in the middle (symmetric)
+prior = ili.utils.distributions_pt.IndependentTruncatedNormal(
+    loc=means,
+    scale=stds,
+    low=low_bounds,
+    high=high_bounds,
+    device=device
+)
+
+# %%
+prior, type(prior)
+
+# %%
+'''
+# Living lyfe dangerously, define a uniform prior over the parameter space
 prior = ili.utils.Uniform(
     low=low_bounds,
     high=high_bounds,
     device=device
 )
+'''
 
 # Define Neural Density Estimators (NDEs) - here using Neural Spline Flows (NSF)
 nets = [
@@ -316,7 +419,7 @@ ax.legend()
 
 # %%
 # Select a single validation sample to evaluate
-ind = 3
+ind = 6
 val_idx = idx_val[ind]
 x_ = graph_dataset[val_idx] # torch_geometric.data.data.Data object lol
 # Get the true parameter values
