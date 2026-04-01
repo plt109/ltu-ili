@@ -43,59 +43,6 @@ from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # %% [markdown]
-# ### Toy Point Set Dataset
-# We generate sets of 2D points. Each set is drawn from a normal distribution with a random center. 
-# The task is to predict the center coordinates (theta) from the unordered set of points.
-#
-
-# %% [raw]
-# # Dataset generation parameters
-# num_samples = 2000
-# avg_points_per_set = 10
-# dim_theta = 2
-#
-# dataset = []
-# thetas = []
-# for _ in range(num_samples):
-#     # Generate a variable number of points per set (Poisson distributed)
-#     num_points_per_set = np.random.poisson(avg_points_per_set)
-#     # Sample the center coordinates (theta) from a uniform prior
-#     theta = np.random.uniform(-3, 3, size=dim_theta)
-#     # Generate points around the center with some Gaussian noise
-#     points = np.random.randn(num_points_per_set, dim_theta) * 0.5 + theta
-#
-#     x_tensor = torch.tensor(points, dtype=torch.float32)
-#     y_tensor = torch.tensor(theta, dtype=torch.float32)[None, :]
-#
-#     # Convert to PyTorch Geometric Data object for variable-sized sets
-#     dataset.append(PYGData(x=x_tensor, y=y_tensor))
-#     thetas.append(y_tensor)
-# # Collect all true thetas for later evaluation
-# thetas = np.concatenate(thetas, axis=0)
-
-# %% [raw]
-#
-# # Plot the first 3 samples from the dataset to visualize the points and their centers
-# fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-# for i in range(3):
-#     data_sample = dataset[i]
-#     x_pts = data_sample.x.numpy()
-#     theta_val = data_sample.y.numpy().flatten()
-#
-#     axes[i].scatter(x_pts[:, 0], x_pts[:, 1], alpha=0.5, label='Points')
-#     axes[i].scatter(theta_val[0], theta_val[1], color='red',
-#                     marker='X', s=100, label='Center')
-#     axes[i].set_xlim(-5, 5)
-#     axes[i].set_ylim(-5, 5)
-#     axes[i].set_title(f'Sample {i+1}, Npts={(len(x_pts))}')
-#     if i == 0:
-#         axes[i].legend()
-# plt.tight_layout()
-# plt.show()
-
-# %%
-
-# %% [markdown]
 # ## Load my apt simulations
 
 # %%
@@ -106,9 +53,25 @@ aa = np.load(fname, allow_pickle=True).item()
 param_bag = aa['param_bag'] # list of dictionary of the params and values
 events_bag = aa['events_bag'] # list of array, (2, n) in shape
 
+# %% [markdown]
+# ### Embedding configurations
+
 # %%
-#NUM_SAMPLES = 2000
-NUM_SAMPLES = 20000
+# Matt's original embedding
+EMBEDDING_FLAVOUR = 'matts'
+EMBEDDING_OUTPUT_SIZE = 8
+EMBEDDING_HIDDEN_LAYERS = 2
+EMBEDDING_HIDDEN_SIZE = 32
+
+# %%
+fsavebase = '3_param_trained_models'
+
+NUM_SAMPLES = 2000
+#NUM_SAMPLES = 20000
+
+out_dir = f'./{fsavebase}/{NUM_SAMPLES}totalsamples_{EMBEDDING_FLAVOUR}embedding'
+
+# %%
 
 dataset = []
 params = []
@@ -287,14 +250,29 @@ loader = TorchLoader(train_loader, val_loader)
 # %%
 # Design a simple Deep Set embedder
 class DeepSet(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels):
+    def __init__(self, in_channels, hidden_layers, hidden_channels, out_channels):
         super().__init__()
         # Node MLP applied independently to each point/node
+        layers = []
+
+        # First hidden layer
+        layers.append(nn.Linear(in_channels, hidden_channels))
+
+        # Additional hidden layers, must end with linear before pooling
+        for _ in range(hidden_layers - 1):
+            layers.append(nn.ReLU())
+            layers.append(nn.Linear(hidden_channels, hidden_channels))
+
+        self.node_mlp = nn.Sequential(*layers)
+
+        '''
         self.node_mlp = nn.Sequential(
             nn.Linear(in_channels, hidden_channels),
             nn.ReLU(),
-            nn.Linear(hidden_channels, hidden_channels)
+            nn.Linear(hidden_channels, hidden_channels),
         )
+        '''
+
         # Global MLP applied to the aggregated global features
         self.global_mlp = nn.Sequential(
             nn.Linear(hidden_channels * 2, hidden_channels), # cause pooling max and mean, so 2x hidden_channels
@@ -311,11 +289,16 @@ class DeepSet(nn.Module):
         # Pool features globally using both mean and max to ensure permutation invariance
         mean_pool = global_mean_pool(node_embed, batch)
         max_pool = global_max_pool(node_embed, batch)
+
         # Concatenate pooled features and apply global transformation
         global_embed = torch.cat([mean_pool, max_pool], dim=1)
+        
         return self.global_mlp(global_embed)
 
-embedding = DeepSet(in_channels=DIM_DATA, hidden_channels=32, out_channels=8)
+embedding = DeepSet(in_channels=DIM_DATA,
+                    hidden_layers=EMBEDDING_HIDDEN_LAYERS,
+                    hidden_channels=EMBEDDING_HIDDEN_SIZE,
+                    out_channels=EMBEDDING_OUTPUT_SIZE)
 
 # %%
 embedding
@@ -353,7 +336,6 @@ for param_name, param_info in apt_param_config.items():
     high_bounds.append(high)
 
 # %%
-# Option 1: Centered in the middle (symmetric)
 prior = ili.utils.distributions_pt.IndependentTruncatedNormal(
     loc=means,
     scale=stds,
@@ -399,8 +381,8 @@ runner = InferenceRunner.load(
     nets=nets,
     device=device,
     train_args=train_args,
-    proposal=None,
-    out_dir=None
+    proposal=None, # defaults to prior if None
+    out_dir=out_dir,
 )
 
 # %%
@@ -408,7 +390,6 @@ runner = InferenceRunner.load(
 posterior_ensemble, summaries = runner(loader=loader)
 
 # %%
-
 # Plot training and validation log probabilities over epochs
 fig, ax = plt.subplots()
 for i, m in enumerate(summaries):
@@ -416,6 +397,7 @@ for i, m in enumerate(summaries):
     ax.plot(m['validation_log_probs'], ls='--', label="val")
 ax.set_xlabel('Epoch')
 ax.set_ylabel('Log probability')
+ax.grid()
 ax.legend()
 
 # %% [markdown]
@@ -450,6 +432,10 @@ plt.xlabel('cS1 [PE]')
 plt.ylabel('cS2 [PE]')
 
 # %%
+len(apt_param_config)
+
+# %%
+plt.figure(figsize=(15, 4))
 for _ii, (key, val) in enumerate(apt_param_config.items()):
     zzz = zzparams[:, _ii]
     zzmin, zzmax = zzz.min(), zzz.max()
@@ -462,7 +448,7 @@ for _ii, (key, val) in enumerate(apt_param_config.items()):
         zzmean = val['init_mean']
         zzstd = val['init_std']
 
-    plt.figure()
+    plt.subplot(131+_ii)
     plt.hist(zzz, bins=zzxx, density=True, histtype='step', label='True param distribution')
     plt.hist(samples[:, _ii], bins=zzxx, density=True, histtype='step', label=f'Sampled from posterior')
     plt.plot(zzxx, sps.stats.norm.pdf(zzxx, loc=zzmean, scale=zzstd), label='Prior PDF')
@@ -470,7 +456,9 @@ for _ii, (key, val) in enumerate(apt_param_config.items()):
 
     plt.title(f'True param range: [{zzmin:.2f}, {zzmax:.2f}]')
     plt.xlabel(f'{key} [{val["unit"]}]')
-    plt.legend()
+
+    if _ii == DIM_THETA-1:
+        plt.legend(loc='center left', bbox_to_anchor=(1., 0.5))
 
 
 # %%
