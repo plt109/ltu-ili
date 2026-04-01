@@ -48,50 +48,50 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # The task is to predict the center coordinates (theta) from the unordered set of points.
 #
 
-# %%
-# Dataset generation parameters
-num_samples = 2000
-avg_points_per_set = 10
-dim_theta = 2
+# %% [raw]
+# # Dataset generation parameters
+# num_samples = 2000
+# avg_points_per_set = 10
+# dim_theta = 2
+#
+# dataset = []
+# thetas = []
+# for _ in range(num_samples):
+#     # Generate a variable number of points per set (Poisson distributed)
+#     num_points_per_set = np.random.poisson(avg_points_per_set)
+#     # Sample the center coordinates (theta) from a uniform prior
+#     theta = np.random.uniform(-3, 3, size=dim_theta)
+#     # Generate points around the center with some Gaussian noise
+#     points = np.random.randn(num_points_per_set, dim_theta) * 0.5 + theta
+#
+#     x_tensor = torch.tensor(points, dtype=torch.float32)
+#     y_tensor = torch.tensor(theta, dtype=torch.float32)[None, :]
+#
+#     # Convert to PyTorch Geometric Data object for variable-sized sets
+#     dataset.append(PYGData(x=x_tensor, y=y_tensor))
+#     thetas.append(y_tensor)
+# # Collect all true thetas for later evaluation
+# thetas = np.concatenate(thetas, axis=0)
 
-dataset = []
-thetas = []
-for _ in range(num_samples):
-    # Generate a variable number of points per set (Poisson distributed)
-    num_points_per_set = np.random.poisson(avg_points_per_set)
-    # Sample the center coordinates (theta) from a uniform prior
-    theta = np.random.uniform(-3, 3, size=dim_theta)
-    # Generate points around the center with some Gaussian noise
-    points = np.random.randn(num_points_per_set, dim_theta) * 0.5 + theta
-
-    x_tensor = torch.tensor(points, dtype=torch.float32)
-    y_tensor = torch.tensor(theta, dtype=torch.float32)[None, :]
-
-    # Convert to PyTorch Geometric Data object for variable-sized sets
-    dataset.append(PYGData(x=x_tensor, y=y_tensor))
-    thetas.append(y_tensor)
-# Collect all true thetas for later evaluation
-thetas = np.concatenate(thetas, axis=0)
-
-# %%
-
-# Plot the first 3 samples from the dataset to visualize the points and their centers
-fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-for i in range(3):
-    data_sample = dataset[i]
-    x_pts = data_sample.x.numpy()
-    theta_val = data_sample.y.numpy().flatten()
-
-    axes[i].scatter(x_pts[:, 0], x_pts[:, 1], alpha=0.5, label='Points')
-    axes[i].scatter(theta_val[0], theta_val[1], color='red',
-                    marker='X', s=100, label='Center')
-    axes[i].set_xlim(-5, 5)
-    axes[i].set_ylim(-5, 5)
-    axes[i].set_title(f'Sample {i+1}, Npts={(len(x_pts))}')
-    if i == 0:
-        axes[i].legend()
-plt.tight_layout()
-plt.show()
+# %% [raw]
+#
+# # Plot the first 3 samples from the dataset to visualize the points and their centers
+# fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+# for i in range(3):
+#     data_sample = dataset[i]
+#     x_pts = data_sample.x.numpy()
+#     theta_val = data_sample.y.numpy().flatten()
+#
+#     axes[i].scatter(x_pts[:, 0], x_pts[:, 1], alpha=0.5, label='Points')
+#     axes[i].scatter(theta_val[0], theta_val[1], color='red',
+#                     marker='X', s=100, label='Center')
+#     axes[i].set_xlim(-5, 5)
+#     axes[i].set_ylim(-5, 5)
+#     axes[i].set_title(f'Sample {i+1}, Npts={(len(x_pts))}')
+#     if i == 0:
+#         axes[i].legend()
+# plt.tight_layout()
+# plt.show()
 
 # %%
 
@@ -107,7 +107,8 @@ param_bag = aa['param_bag'] # list of dictionary of the params and values
 events_bag = aa['events_bag'] # list of array, (2, n) in shape
 
 # %%
-NUM_SAMPLES = 2000
+#NUM_SAMPLES = 2000
+NUM_SAMPLES = 20000
 
 dataset = []
 params = []
@@ -203,10 +204,11 @@ for _ii, (key, val) in enumerate(apt_param_config.items()):
         zzstd = val['init_std']
 
     plt.figure()
-    plt.hist(zzz, bins=50, density=True)
+    plt.hist(zzz, bins=zzxx, density=True, label='True input parameter distribution')
     plt.plot(zzxx, sps.stats.norm.pdf(zzxx, loc=zzmean, scale=zzstd), label='Prior PDF')
     plt.title(f'[{zzmin:.2f}, {zzmax:.2f}]')
     plt.xlabel(f'{key} [{val["unit"]}]')
+    plt.ylabel('PDF')
     plt.legend()
 
 # %%
@@ -284,7 +286,6 @@ loader = TorchLoader(train_loader, val_loader)
 
 # %%
 # Design a simple Deep Set embedder
-
 class DeepSet(nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
         super().__init__()
@@ -417,6 +418,10 @@ ax.set_xlabel('Epoch')
 ax.set_ylabel('Log probability')
 ax.legend()
 
+# %% [markdown]
+# ## Pick a set for testing
+# Fake x_obs
+
 # %%
 # Select a single validation sample to evaluate
 ind = 6
@@ -445,23 +450,34 @@ plt.xlabel('cS1 [PE]')
 plt.ylabel('cS2 [PE]')
 
 # %%
-dim_theta = DIM_THETA
+for _ii, (key, val) in enumerate(apt_param_config.items()):
+    zzz = zzparams[:, _ii]
+    zzmin, zzmax = zzz.min(), zzz.max()
+    zzxx = np.linspace(zzmin, zzmax, 50)
 
-# %%
-type(samples), samples.shape
+    try:
+        zzmean = val['prior_args']['mean']
+        zzstd = val['prior_args']['std']
+    except:
+        zzmean = val['init_mean']
+        zzstd = val['init_std']
 
-# %%
-for _ii in range(DIM_THETA):
     plt.figure()
-    plt.hist(samples[:, _ii], bins=50, alpha=0.5, label=f'sample dim {_ii}')
+    plt.hist(zzz, bins=zzxx, density=True, histtype='step', label='True param distribution')
+    plt.hist(samples[:, _ii], bins=zzxx, density=True, histtype='step', label=f'Sampled from posterior')
+    plt.plot(zzxx, sps.stats.norm.pdf(zzxx, loc=zzmean, scale=zzstd), label='Prior PDF')
+    plt.axvline(y_[_ii], color='red', linestyle='--', label='True value')
+
+    plt.title(f'True param range: [{zzmin:.2f}, {zzmax:.2f}]')
+    plt.xlabel(f'{key} [{val["unit"]}]')
+    plt.legend()
 
 
 # %%
 from itertools import combinations
 
 # Visualize the posterior samples compared to the true value for 3D
-dim_theta = DIM_THETA
-n_combinations = dim_theta * (dim_theta - 1) // 2  # 3 choose 2 = 3
+n_combinations = DIM_THETA * (DIM_THETA - 1) // 2  # 3 choose 2 = 3
 
 # Create subplots: one for each pair combination + one colorbar
 fig, axs = plt.subplots(1, n_combinations + 1, 
@@ -469,8 +485,8 @@ fig, axs = plt.subplots(1, n_combinations + 1,
                         gridspec_kw={'width_ratios': [1] * n_combinations + [0.05]})
 
 # Get all pair combinations of parameters
-param_pairs = list(combinations(range(dim_theta), 2))
-param_names = [r'$\theta_0$', r'$\theta_1$', r'$\theta_2$']
+param_pairs = list(combinations(range(DIM_THETA), 2))
+param_names = [_ for _ in apt_param_config.keys()]
 
 # Plot each combination
 for idx, (i, j) in enumerate(param_pairs):
@@ -479,12 +495,10 @@ for idx, (i, j) in enumerate(param_pairs):
                           c=log_prob, s=4, cmap='viridis')
     axs[idx].set_xlabel(param_names[i])
     axs[idx].set_ylabel(param_names[j])
-    axs[idx].set_title(f'{param_names[i]} vs {param_names[j]}')
     
-    # Optional: plot the true value if you have it
-    # true_values = [true_theta0, true_theta1, true_theta2]  # define your true values
-    # axs[idx].plot(true_values[i], true_values[j], 'r+', markersize=10, label='true')
-    # axs[idx].legend()
+    # Plotting true value
+    axs[idx].plot(y_[i], y_[j], 'r+', markersize=10, label='true')
+    axs[idx].legend()
 
 # Add colorbar to the last subplot
 plt.colorbar(im, label='log probability', cax=axs[-1])
@@ -497,7 +511,7 @@ plt.show()
 
 metric = PlotSinglePosterior(
     num_samples=1000, sample_method='direct',
-    labels=[f'$\\theta_{i}$' for i in range(dim_theta)]
+    labels=param_names,
 )
 fig = metric(
     posterior=posterior_ensemble,
@@ -505,19 +519,16 @@ fig = metric(
 )
 
 # %%
-thetas = params
-
-# %%
 # PosteriorCoverage
 metric = PosteriorCoverage(
     num_samples=1000, sample_method='direct',
-    out_dir=None, labels=[f't{i}' for i in range(dim_theta)],
+    out_dir=None, labels=param_names,
     plot_list=["coverage", "histogram", "predictions", "tarp"],
     save_samples=True
 )
 fig = metric(
     posterior=posterior_ensemble,
-    x=graph_dataset, theta=thetas
+    x=graph_dataset, theta=params
 )
 
 # %%
