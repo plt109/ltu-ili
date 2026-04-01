@@ -43,18 +43,7 @@ from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # %% [markdown]
-# ## Load my apt simulations
-
-# %%
-fbase = '/home/puehlengt/appletree/notebooks/'
-fname = f'{fbase}/harvested_testsims_3params.npy'
-
-aa = np.load(fname, allow_pickle=True).item()
-param_bag = aa['param_bag'] # list of dictionary of the params and values
-events_bag = aa['events_bag'] # list of array, (2, n) in shape
-
-# %% [markdown]
-# ### Embedding configurations
+# ## Embedding configurations
 
 # %%
 # Matt's original embedding
@@ -71,42 +60,16 @@ NUM_SAMPLES = 2000
 
 out_dir = f'./{fsavebase}/{NUM_SAMPLES}totalsamples_{EMBEDDING_FLAVOUR}embedding'
 
-# %%
-
-dataset = []
-params = []
-cnt = 0
-for _ind in range(len(events_bag)):
-    if cnt >= NUM_SAMPLES:
-        break
-    _events = torch.tensor(events_bag[_ind].T)
-    _params = torch.tensor([_ for _ in param_bag[_ind].values()]).reshape(1, -1)
-
-    dataset.append(PYGData(x=_events, y=_params))
-    params.append(_params)
-    cnt += 1
-
-# Collect all true param values for later evaluation # not sure what for, but okie
-params = np.concatenate(params, axis=0)
-
-_, DIM_THETA = _params.shape
-_, DIM_DATA = _events.shape
+# %% [markdown]
+# ## Load my apt simulations
 
 # %%
-print(f'Dataset loaded with {len(dataset):.0e} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
+fbase = '/home/puehlengt/appletree/notebooks/'
+fname = f'{fbase}/harvested_testsims_3params.npy'
 
-# %%
-zzparams = []
-cnt = 0
-for _ind in range(len(events_bag)):
-    if cnt >= NUM_SAMPLES:
-        break
-    _params = [_ for _ in param_bag[_ind].values()]
-    zzparams.append(_params)
-    cnt += 1
-
-# %%
-zzparams = np.array(zzparams)
+aa = np.load(fname, allow_pickle=True).item()
+param_bag = aa['param_bag'] # list of dictionary of the params and values
+events_bag = aa['events_bag'] # list of array, (2, n) in shape
 
 # %%
 apt_param_config = {"g1": {
@@ -152,6 +115,40 @@ apt_param_config = {"g1": {
         "doc": "total number of events in the AmBe NR calibration"
     }
 }
+
+# %%
+dataset = []
+params = []
+cnt = 0
+for _ind in range(len(events_bag)):
+    if cnt >= NUM_SAMPLES:
+        break
+    _events = torch.tensor(events_bag[_ind].T)
+    _params = torch.tensor([_ for _ in param_bag[_ind].values()]).reshape(1, -1)
+
+    dataset.append(PYGData(x=_events, y=_params))
+    params.append(_params)
+    cnt += 1
+
+# Collect all true param values for later evaluation # not sure what for, but okie
+params = np.concatenate(params, axis=0)
+
+_, DIM_THETA = _params.shape
+_, DIM_DATA = _events.shape
+
+# %%
+print(f'Dataset loaded with {len(dataset):.0e} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
+
+# %%
+zzparams = []
+cnt = 0
+for _ind in range(len(events_bag)):
+    if cnt >= NUM_SAMPLES:
+        break
+    _params = [_ for _ in param_bag[_ind].values()]
+    zzparams.append(_params)
+    cnt += 1
+zzparams = np.array(zzparams)
 
 # %%
 for _ii, (key, val) in enumerate(apt_param_config.items()):
@@ -226,24 +223,49 @@ def collate_fn(batch):
     return batch, batch.y
 
 
-# Define train/validation split indices
-validation_fraction = 0.1
-n_train = int((1 - validation_fraction) * len(graph_dataset))
-permuted_idx = np.random.permutation(len(graph_dataset))
-idx_train = permuted_idx[:n_train]
-idx_val = permuted_idx[n_train:]
+# %%
+# Only seeding the permutation for reproducibility of train/val/test split, not the model training itself
+np.random.seed(42)
 
-# Create PyTorch DataLoaders for training and validation
+# Define test set size and validation fraction (after removing test set)
+n_test = 10
+validation_fraction = 0.1
+
+# Randomly permute all indices
+permuted_idx = np.random.permutation(NUM_SAMPLES)
+
+# Split into test and remaining
+idx_test = permuted_idx[:n_test]
+idx_remaining = permuted_idx[n_test:]
+
+# Define training and validation set sizes
+n_remaining = len(idx_remaining)
+n_train = int((1 - validation_fraction) * n_remaining)
+n_val = n_remaining - n_train
+
+# Split remaining into training and validation
+idx_train = idx_remaining[:n_train]
+idx_val = idx_remaining[n_train:]
+
+# Create PyTorch DataLoaders
 train_loader = data.DataLoader(
     graph_dataset, batch_size=32, collate_fn=collate_fn,
     sampler=data.SubsetRandomSampler(idx_train), drop_last=True
 )
+
 val_loader = data.DataLoader(
     graph_dataset, batch_size=32, collate_fn=collate_fn,
     sampler=data.SubsetRandomSampler(idx_val)
 )
 
-# Wrap the PyTorch DataLoaders in an ltu-ili TorchLoader
+''' # Don't need loader for test set for now, but mabbe need it in the future
+test_loader = data.DataLoader(
+    graph_dataset, batch_size=32, collate_fn=collate_fn,
+    sampler=data.SubsetRandomSampler(idx_test)
+)
+'''
+
+# Wrap in TorchLoader
 loader = TorchLoader(train_loader, val_loader)
 
 
@@ -264,14 +286,6 @@ class DeepSet(nn.Module):
             layers.append(nn.Linear(hidden_channels, hidden_channels))
 
         self.node_mlp = nn.Sequential(*layers)
-
-        '''
-        self.node_mlp = nn.Sequential(
-            nn.Linear(in_channels, hidden_channels),
-            nn.ReLU(),
-            nn.Linear(hidden_channels, hidden_channels),
-        )
-        '''
 
         # Global MLP applied to the aggregated global features
         self.global_mlp = nn.Sequential(
@@ -406,15 +420,17 @@ ax.legend()
 
 # %%
 # Select a single validation sample to evaluate
-ind = 6
-val_idx = idx_val[ind]
-x_ = graph_dataset[val_idx] # torch_geometric.data.data.Data object lol
-# Get the true parameter values
-y_ = x_.y[0].numpy()
+ind = 0
+test_idx = idx_test[ind]
+
+x_ = graph_dataset[test_idx] # Events. torch_geometric.data.data.Data object lol
+y_ = x_.y[0].numpy() # True parameter values
 
 torch.manual_seed(1234)
+
 # Sample from the trained posterior ensemble
 samples = posterior_ensemble.sample((1000,), x_)
+
 # Evaluate the log probability of the samples
 log_prob = posterior_ensemble.log_prob(samples, x_)
 
@@ -430,9 +446,6 @@ plt.scatter(test[:, 0], test[:, 1], alpha=0.5, label='MC Events')
 plt.title(f'True params: {y_}')
 plt.xlabel('cS1 [PE]')
 plt.ylabel('cS2 [PE]')
-
-# %%
-len(apt_param_config)
 
 # %%
 plt.figure(figsize=(15, 4))
@@ -496,7 +509,6 @@ plt.show()
 
 
 # %%
-
 metric = PlotSinglePosterior(
     num_samples=1000, sample_method='direct',
     labels=param_names,
