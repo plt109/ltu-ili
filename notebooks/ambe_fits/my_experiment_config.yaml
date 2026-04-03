@@ -1,0 +1,29 @@
+# my_experiment_config.yaml
+save_base: 3_param_trained_models
+out_dir: "{save_base}/{num_samples}totalsamples_{embedding_flavour}embedding"
+
+wandb:
+  project: "my-sbi-project"
+  entity: "plt109"          # smt like team/username
+
+data:
+  base_dir: /home/puehlengt/appletree/notebooks
+  fname: harvested_testsims_3params.npy
+  num_samples: 2000
+
+embedding:
+  flavour: matts
+  in_channels: 2
+  output_size: 8
+  hidden_layers: 2
+  hidden_size: 32
+
+model:
+  type: nsf
+  hidden_features: 32
+  num_transforms: 3
+
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  stop_after_epochs: 20

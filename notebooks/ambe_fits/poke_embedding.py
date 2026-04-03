@@ -49,39 +49,34 @@ from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
 # Set device for PyTorch (GPU if available, else CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# %%
-from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.callbacks import Callback
-
 # %% [markdown]
-# ## Embedding configurations
+# ## Load config file
 
 # %%
-# Matt's original embedding
-EMBEDDING_FLAVOUR = 'matts'
-EMBEDDING_OUTPUT_SIZE = 8
-EMBEDDING_HIDDEN_LAYERS = 2
-EMBEDDING_HIDDEN_SIZE = 32
+with open("my_experiment_config.yaml") as f:
+    cfg = yaml.safe_load(f)
+cfg['out_dir'] = cfg['out_dir'].format(
+    **cfg,
+    num_samples=cfg['data']['num_samples'],
+    embedding_flavour=cfg['embedding']['flavour'],
+)
 
 # %%
-fsavebase = '3_param_trained_models'
-
-NUM_SAMPLES = 2000
-#NUM_SAMPLES = 20000
-
-out_dir = f'./{fsavebase}/{NUM_SAMPLES}totalsamples_{EMBEDDING_FLAVOUR}embedding'
+# init wandb
+wandb.init(
+    project=cfg['wandb']['project'],
+    entity=cfg['wandb']['entity'],
+    config=cfg,   # logs everything in cfg automatically, no duplication
+)
 
 # %% [markdown]
 # ## Load my apt simulations
 
 # %%
-fbase = '/home/puehlengt/appletree/notebooks/'
-fname = f'{fbase}/harvested_testsims_3params.npy'
-
+fname = f"{cfg['data']['base_dir']}/{cfg['data']['fname']}"
 aa = np.load(fname, allow_pickle=True).item()
-param_bag = aa['param_bag'] # list of dictionary of the params and values
-events_bag = aa['events_bag'] # list of array, (2, n) in shape
+param_bag = aa['param_bag']
+events_bag = aa['events_bag']
 
 # %%
 apt_param_config = {"g1": {
@@ -133,7 +128,7 @@ dataset = []
 params = []
 cnt = 0
 for _ind in range(len(events_bag)):
-    if cnt >= NUM_SAMPLES:
+    if cnt >= cfg['data']['num_samples']:
         break
     _events = torch.tensor(events_bag[_ind].T)
     _params = torch.tensor([_ for _ in param_bag[_ind].values()]).reshape(1, -1)
@@ -155,7 +150,7 @@ print(f'Dataset loaded with {len(dataset):.0e} samples, each with {DIM_DATA} dat
 zzparams = []
 cnt = 0
 for _ind in range(len(events_bag)):
-    if cnt >= NUM_SAMPLES:
+    if cnt >= cfg['data']['num_samples']:
         break
     _params = [_ for _ in param_bag[_ind].values()]
     zzparams.append(_params)
@@ -244,7 +239,7 @@ n_test = 10
 validation_fraction = 0.1
 
 # Randomly permute all indices
-permuted_idx = np.random.permutation(NUM_SAMPLES)
+permuted_idx = np.random.permutation(cfg['data']['num_samples'])
 
 # Split into test and remaining
 idx_test = permuted_idx[:n_test]
@@ -321,10 +316,15 @@ class DeepSet(nn.Module):
         
         return self.global_mlp(global_embed)
 
-embedding = DeepSet(in_channels=DIM_DATA,
-                    hidden_layers=EMBEDDING_HIDDEN_LAYERS,
-                    hidden_channels=EMBEDDING_HIDDEN_SIZE,
-                    out_channels=EMBEDDING_OUTPUT_SIZE)
+
+
+# %%
+embedding = DeepSet(
+    in_channels=cfg['embedding']['in_channels'],
+    hidden_layers=cfg['embedding']['hidden_layers'],
+    hidden_channels=cfg['embedding']['hidden_size'],
+    out_channels=cfg['embedding']['output_size'],
+)
 
 # %%
 embedding
@@ -389,54 +389,38 @@ class WandbLampeRunner(LampeRunner):
 
 
 # %%
-# 1. Initialize wandb run
-wandb.init(
-    project="my-sbi-project",
-    config={
-        "model": "nsf",
-        "hidden_features": 32,
-        "num_transforms": 3,
-        "learning_rate": 1e-4,
-        "batch_size": 32,
-        "stop_after_epochs": 20,
-        "device": device,
-    }
-)
-
-# %%
-# 2. Define Neural Density Estimators
+# nets
 nets = [
     ili.utils.load_nde_lampe(
-        model='nsf',
-        hidden_features=32,
-        num_transforms=3,
+        model=cfg['model']['type'],
+        hidden_features=cfg['model']['hidden_features'],
+        num_transforms=cfg['model']['num_transforms'],
         embedding_net=embedding,
         x_normalize=False,
         device=device,
     )
 ]
 
-
 # %%
-# 3. Define train args
+# train args
 train_args = {
-    'training_batch_size': 32,
-    'learning_rate': 1e-4,
-    'stop_after_epochs': 20,
+    'training_batch_size': cfg['training']['batch_size'],
+    'learning_rate': cfg['training']['learning_rate'],
+    'stop_after_epochs': cfg['training']['stop_after_epochs'],
 }
 
 # %%
+# runner
 runner = WandbLampeRunner(
     prior=prior,
     nets=nets,
     device=device,
     train_args=train_args,
     proposal=None,
-    out_dir=out_dir,
+    out_dir=cfg['out_dir'],
 )
 
 # %%
-
 # 6. Train
 posterior_ensemble, summaries = runner(loader=loader)
 
@@ -453,84 +437,6 @@ ax.set_xlabel('Epoch')
 ax.set_ylabel('Log probability')
 ax.grid()
 ax.legend()
-
-# %%
-raise
-
-# %%
-
-# %%
-
-# %%
-
-# %%
-# Load ML experiment config
-f_config = './my_experiment_config.yaml'
-with open(f_config, "r") as f:
-    wandb_config = yaml.safe_load(f) # returns dictionary
-
-# %%
-# Initialize wandb with your personal team
-wandb.init(
-    project=config['wandb']['project'],
-    entity="puehleng-tan",  # Use your personal team name
-    name=config['wandb'].get('name'),
-    config=config['wandb']['config']
-)
-
-print(f"Wandb run: {wandb.run.name}")
-print(f"View at: {wandb.run.get_url()}")
-
-# %%
-# Init a wandb run
-wandb.init(
-    project=wandb_config['wandb']['project'],
-    entity=wandb_config['wandb'].get('entity'),
-    name=wandb_config['wandb'].get('name'),
-    config=wandb_config['wandb']['config']
-)
-
-# %%
-'''
-# Living lyfe dangerously, define a uniform prior over the parameter space
-prior = ili.utils.Uniform(
-    low=low_bounds,
-    high=high_bounds,
-    device=device
-)
-'''
-
-# Define Neural Density Estimators (NDEs) - here using Neural Spline Flows (NSF)
-nets = [
-    ili.utils.load_nde_lampe(
-        model='nsf', hidden_features=32, num_transforms=3,
-        # Pass the custom Deep Set embedding network to compress the data
-        embedding_net=embedding, x_normalize=False, device=device
-    )
-]
-
-# Specify training hyperparameters
-train_args = {
-    'training_batch_size': 32,
-    'learning_rate': 1e-4,
-    'stop_after_epochs': 20
-}
-
-# Initialize the inference runner with the 'lampe' backend for Neural Posterior Estimation (NPE)
-runner = InferenceRunner.load(
-    backend='lampe',
-    engine='NPE',
-    prior=prior,
-    nets=nets,
-    device=device,
-    train_args=train_args,
-    proposal=None, # defaults to prior if None
-    out_dir=out_dir,
-)
-
-# %%
-# Run the inference training process to learn the posterior
-posterior_ensemble, summaries = runner(loader=loader)
 
 # %% [markdown]
 # ## Pick a set for testing
@@ -648,7 +554,5 @@ fig = metric(
     posterior=posterior_ensemble,
     x=graph_dataset, theta=params
 )
-
-# %%
 
 # %%
