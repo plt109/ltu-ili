@@ -26,6 +26,9 @@ import numpy as np
 import scipy as sps
 import matplotlib.pyplot as plt
 
+import yaml
+import wandb
+
 # PyTorch
 import torch
 import torch.nn as nn
@@ -42,10 +45,13 @@ from ili.dataloaders import TorchLoader
 from ili.inference import InferenceRunner
 from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
 
-import wandb
-
 # Set device for PyTorch (GPU if available, else CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# %%
+from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import Callback
 
 # %% [markdown]
 # ## Embedding configurations
@@ -367,6 +373,225 @@ prior = ili.utils.distributions_pt.IndependentTruncatedNormal(
 prior, type(prior)
 
 # %%
+# 1. Initialize wandb run
+wandb.init(
+    project="my-sbi-project",
+    name="nsf-npe-run-01",
+    config={
+        "model": "nsf",
+        "hidden_features": 32,
+        "num_transforms": 3,
+        "learning_rate": 1e-4,
+        "batch_size": 32,
+        "stop_after_epochs": 20,
+        "device": device,
+    }
+)
+
+# %%
+# 2. Define Neural Density Estimators
+nets = [
+    ili.utils.load_nde_lampe(
+        model='nsf',
+        hidden_features=32,
+        num_transforms=3,
+        embedding_net=embedding,
+        x_normalize=False,
+        device=device,
+    )
+]
+
+
+# %%
+# 3. Define train args
+train_args = {
+    'training_batch_size': 32,
+    'learning_rate': 1e-4,
+    'stop_after_epochs': 20,
+}
+
+# %%
+# 4. Initialize runner
+runner = InferenceRunner.load(
+    backend='lampe',
+    engine='NPE',
+    prior=prior,
+    nets=nets,
+    device=device,
+    train_args=train_args,
+    proposal=None,
+    out_dir=out_dir,
+)
+
+
+# %%
+# 5. Monkey-patch _train_epoch for live wandb logging
+original_train_epoch = runner._train_epoch.__func__
+
+def _train_epoch_with_wandb(self, model, train_loader, val_loader, stepper):
+    loss_train, loss_val = original_train_epoch(
+        self, model, train_loader, val_loader, stepper)
+    wandb.log({
+        'train_log_prob': -loss_train,
+        'val_log_prob': -loss_val,
+    })
+    return loss_train, loss_val
+
+runner._train_epoch = types.MethodType(_train_epoch_with_wandb, runner)
+
+# %%
+runner._train_epoch = types.MethodType(_train_epoch_with_wandb, runner)
+
+# 6. Train
+posterior_ensemble, summaries = runner(loader=loader)
+
+# 7. Finish
+wandb.finish()
+
+# %%
+raise
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+
+# %%
+# 1. Create the WandbLogger
+wandb_logger = WandbLogger(
+    project="my-sbi-project",
+    name="nsf-npe-run-01",
+    log_model=True,   # saves model checkpoints as W&B artifacts
+    save_dir=out_dir,
+)
+
+
+# %%
+
+# 2. Optionally log your hyperparams to wandb config
+wandb_logger.experiment.config.update({
+    "model": "nsf",
+    "hidden_features": 32,
+    "num_transforms": 3,
+    "learning_rate": 1e-4,
+    "batch_size": 32,
+    "stop_after_epochs": 20,
+    "device": device,
+})
+
+
+# %%
+
+# 3. Define Neural Density Estimators
+nets = [
+    ili.utils.load_nde_lampe(
+        model='nsf',
+        hidden_features=32,
+        num_transforms=3,
+        embedding_net=embedding,
+        x_normalize=False,
+        device=device,
+    )
+]
+
+# 4. Add logger (and optionally a checkpoint callback) to train_args
+train_args = {
+    'training_batch_size': 32,
+    'learning_rate': 1e-4,
+    'stop_after_epochs': 20,
+    'logger': wandb_logger,                     # <-- inject here
+    'callbacks': [
+        ModelCheckpoint(                        # optional but useful
+            monitor='val_loss',
+            save_top_k=1,
+            mode='min',
+            dirpath=out_dir,
+            filename='best-checkpoint',
+        )
+    ],
+}
+
+# %%
+
+# 4. Add logger (and optionally a checkpoint callback) to train_args
+train_args = {
+    'training_batch_size': 32,
+    'learning_rate': 1e-4,
+    'stop_after_epochs': 20,
+    'logger': wandb_logger,                     # <-- inject here
+    'callbacks': [WandbLossCallback()],
+}
+
+# %%
+# 5. Initialize runner as normal
+runner = InferenceRunner.load(
+    backend='lampe',
+    engine='NPE',
+    prior=prior,
+    nets=nets,
+    device=device,
+    train_args=train_args,
+    proposal=None,
+    out_dir=out_dir,
+)
+
+
+# %%
+# 6. Run training
+posterior_ensemble, summaries = runner(loader=loader)
+
+# %%
+# 7. Finish the wandb run
+wandb.finish()
+
+# %%
+
+# %%
+raise
+
+# %%
+
+# %%
+
+# %%
+# Load ML experiment config
+f_config = './my_experiment_config.yaml'
+with open(f_config, "r") as f:
+    wandb_config = yaml.safe_load(f) # returns dictionary
+
+# %%
+# Initialize wandb with your personal team
+wandb.init(
+    project=config['wandb']['project'],
+    entity="puehleng-tan",  # Use your personal team name
+    name=config['wandb'].get('name'),
+    config=config['wandb']['config']
+)
+
+print(f"Wandb run: {wandb.run.name}")
+print(f"View at: {wandb.run.get_url()}")
+
+# %%
+# Init a wandb run
+wandb.init(
+    project=wandb_config['wandb']['project'],
+    entity=wandb_config['wandb'].get('entity'),
+    name=wandb_config['wandb'].get('name'),
+    config=wandb_config['wandb']['config']
+)
+
+# %%
+wandb.api.default_entity
+
+# %%
+viewer = wandb.api.viewer()
+print(f"Your personal username: {viewer['username']}")
+print(f"Your teams: {viewer.get('teams', [])}")
+
+# %%
 '''
 # Living lyfe dangerously, define a uniform prior over the parameter space
 prior = ili.utils.Uniform(
@@ -535,5 +760,7 @@ fig = metric(
     posterior=posterior_ensemble,
     x=graph_dataset, theta=params
 )
+
+# %%
 
 # %%
