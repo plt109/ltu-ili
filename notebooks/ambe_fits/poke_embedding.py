@@ -43,6 +43,7 @@ from torch_geometric.nn import global_mean_pool, global_max_pool
 import ili
 from ili.dataloaders import TorchLoader
 from ili.inference import InferenceRunner
+from ili.inference.runner_lampe import LampeRunner
 from ili.validation.metrics import PlotSinglePosterior, PosteriorCoverage
 
 # Set device for PyTorch (GPU if available, else CPU)
@@ -372,11 +373,25 @@ prior = ili.utils.distributions_pt.IndependentTruncatedNormal(
 # %%
 prior, type(prior)
 
+
+# %%
+
+# %%
+class WandbLampeRunner(LampeRunner):
+    def _train_epoch(self, model, train_loader, val_loader, stepper):
+        loss_train, loss_val = super()._train_epoch(
+            model, train_loader, val_loader, stepper)
+        wandb.log({
+            'train_log_prob': -loss_train,
+            'val_log_prob': -loss_val,
+        })
+        return loss_train, loss_val
+
+
 # %%
 # 1. Initialize wandb run
 wandb.init(
     project="my-sbi-project",
-    name="nsf-npe-run-01",
     config={
         "model": "nsf",
         "hidden_features": 32,
@@ -411,10 +426,7 @@ train_args = {
 }
 
 # %%
-# 4. Initialize runner
-runner = InferenceRunner.load(
-    backend='lampe',
-    engine='NPE',
+runner = WandbLampeRunner(
     prior=prior,
     nets=nets,
     device=device,
@@ -423,24 +435,7 @@ runner = InferenceRunner.load(
     out_dir=out_dir,
 )
 
-
 # %%
-# 5. Monkey-patch _train_epoch for live wandb logging
-original_train_epoch = runner._train_epoch.__func__
-
-def _train_epoch_with_wandb(self, model, train_loader, val_loader, stepper):
-    loss_train, loss_val = original_train_epoch(
-        self, model, train_loader, val_loader, stepper)
-    wandb.log({
-        'train_log_prob': -loss_train,
-        'val_log_prob': -loss_val,
-    })
-    return loss_train, loss_val
-
-runner._train_epoch = types.MethodType(_train_epoch_with_wandb, runner)
-
-# %%
-runner._train_epoch = types.MethodType(_train_epoch_with_wandb, runner)
 
 # 6. Train
 posterior_ensemble, summaries = runner(loader=loader)
@@ -449,108 +444,20 @@ posterior_ensemble, summaries = runner(loader=loader)
 wandb.finish()
 
 # %%
-raise
-
-# %%
-
-# %%
-
-# %%
-
-# %%
-
-# %%
-# 1. Create the WandbLogger
-wandb_logger = WandbLogger(
-    project="my-sbi-project",
-    name="nsf-npe-run-01",
-    log_model=True,   # saves model checkpoints as W&B artifacts
-    save_dir=out_dir,
-)
-
-
-# %%
-
-# 2. Optionally log your hyperparams to wandb config
-wandb_logger.experiment.config.update({
-    "model": "nsf",
-    "hidden_features": 32,
-    "num_transforms": 3,
-    "learning_rate": 1e-4,
-    "batch_size": 32,
-    "stop_after_epochs": 20,
-    "device": device,
-})
-
-
-# %%
-
-# 3. Define Neural Density Estimators
-nets = [
-    ili.utils.load_nde_lampe(
-        model='nsf',
-        hidden_features=32,
-        num_transforms=3,
-        embedding_net=embedding,
-        x_normalize=False,
-        device=device,
-    )
-]
-
-# 4. Add logger (and optionally a checkpoint callback) to train_args
-train_args = {
-    'training_batch_size': 32,
-    'learning_rate': 1e-4,
-    'stop_after_epochs': 20,
-    'logger': wandb_logger,                     # <-- inject here
-    'callbacks': [
-        ModelCheckpoint(                        # optional but useful
-            monitor='val_loss',
-            save_top_k=1,
-            mode='min',
-            dirpath=out_dir,
-            filename='best-checkpoint',
-        )
-    ],
-}
-
-# %%
-
-# 4. Add logger (and optionally a checkpoint callback) to train_args
-train_args = {
-    'training_batch_size': 32,
-    'learning_rate': 1e-4,
-    'stop_after_epochs': 20,
-    'logger': wandb_logger,                     # <-- inject here
-    'callbacks': [WandbLossCallback()],
-}
-
-# %%
-# 5. Initialize runner as normal
-runner = InferenceRunner.load(
-    backend='lampe',
-    engine='NPE',
-    prior=prior,
-    nets=nets,
-    device=device,
-    train_args=train_args,
-    proposal=None,
-    out_dir=out_dir,
-)
-
-
-# %%
-# 6. Run training
-posterior_ensemble, summaries = runner(loader=loader)
-
-# %%
-# 7. Finish the wandb run
-wandb.finish()
-
-# %%
+# Plot training and validation log probabilities over epochs
+fig, ax = plt.subplots()
+for i, m in enumerate(summaries):
+    ax.plot(m['training_log_probs'], ls='-', label="train")
+    ax.plot(m['validation_log_probs'], ls='--', label="val")
+ax.set_xlabel('Epoch')
+ax.set_ylabel('Log probability')
+ax.grid()
+ax.legend()
 
 # %%
 raise
+
+# %%
 
 # %%
 
@@ -582,14 +489,6 @@ wandb.init(
     name=wandb_config['wandb'].get('name'),
     config=wandb_config['wandb']['config']
 )
-
-# %%
-wandb.api.default_entity
-
-# %%
-viewer = wandb.api.viewer()
-print(f"Your personal username: {viewer['username']}")
-print(f"Your teams: {viewer.get('teams', [])}")
 
 # %%
 '''
@@ -632,17 +531,6 @@ runner = InferenceRunner.load(
 # %%
 # Run the inference training process to learn the posterior
 posterior_ensemble, summaries = runner(loader=loader)
-
-# %%
-# Plot training and validation log probabilities over epochs
-fig, ax = plt.subplots()
-for i, m in enumerate(summaries):
-    ax.plot(m['training_log_probs'], ls='-', label="train")
-    ax.plot(m['validation_log_probs'], ls='--', label="val")
-ax.set_xlabel('Epoch')
-ax.set_ylabel('Log probability')
-ax.grid()
-ax.legend()
 
 # %% [markdown]
 # ## Pick a set for testing
