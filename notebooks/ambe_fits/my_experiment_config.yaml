@@ -9,7 +9,7 @@ wandb:
   tags:
     - "log-cs2-norm"
     - "theta-norm"
-    - "event-count-embed"
+    - "log-event-count-embed"
 
 data:
   base_dir: /home/puehlengt/appletree/notebooks
@@ -17,7 +17,7 @@ data:
   num_samples: 2000
 
 embedding:
-  flavour: matts_ncount
+  flavour: matts_logncount
   in_channels: 2
   output_size: 8
   hidden_layers: 2
