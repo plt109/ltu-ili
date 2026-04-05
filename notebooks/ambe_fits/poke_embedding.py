@@ -55,6 +55,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # %%
 with open("my_experiment_config.yaml") as f:
     cfg = yaml.safe_load(f)
+
+# cause .yaml no f-strings. explicitly sticking things in here.
 cfg['out_dir'] = cfg['out_dir'].format(
     **cfg,
     num_samples=cfg['data']['num_samples'],
@@ -208,26 +210,24 @@ plt.show()
 # %%
 # Define custom dataset and dataloaders
 
-# PyTorch Dataset wrapper for our generated point sets
 class GraphData(data.Dataset):
-    def __init__(self, data):
+    def __init__(self, data, events_mean=None, events_std=None):
         self.data = data
+        # Normalization stats for [cS1, log(cS2)], computed from training data only
+        self.events_mean = events_mean  # shape (2,)
+        self.events_std = events_std    # shape (2,)
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
-
-
-graph_dataset = GraphData(dataset)
-# Use PyTorch Geometric's Collater to handle batching of variable-size sets
-collater = Collater(dataset=graph_dataset, follow_batch='y')
-
-
-def collate_fn(batch):
-    batch = collater(batch)
-    return batch, batch.y
+        item = self.data[idx]
+        x = item.x.float()
+        # Physics-motivated transform: log(cS2), keep cS1 linear
+        x = torch.stack([x[:, 0], torch.log(x[:, 1])], dim=1)
+        if self.events_mean is not None:
+            x = (x - self.events_mean) / self.events_std
+        return PYGData(x=x, y=item.y)
 
 
 # %%
@@ -254,6 +254,26 @@ n_val = n_remaining - n_train
 idx_train = idx_remaining[:n_train]
 idx_val = idx_remaining[n_train:]
 
+# Compute normalization stats from training data only (avoid leakage from val/test)
+_train_events = []
+for idx in idx_train:
+    x = dataset[idx].x.float()
+    log_cs2 = torch.log(x[:, 1])
+    _train_events.append(torch.stack([x[:, 0], log_cs2], dim=1))
+_train_events = torch.cat(_train_events, dim=0)
+events_mean = _train_events.mean(dim=0)
+events_std = _train_events.std(dim=0).clamp(min=1e-8)
+print(f"Events [cS1, log(cS2)] mean: {events_mean.numpy()}")
+print(f"Events [cS1, log(cS2)] std:  {events_std.numpy()}")
+
+# Create dataset with normalization baked into __getitem__
+graph_dataset = GraphData(dataset, events_mean=events_mean, events_std=events_std)
+collater = Collater(dataset=graph_dataset, follow_batch='y')
+
+def collate_fn(batch):
+    batch = collater(batch)
+    return batch, batch.y
+
 # Create PyTorch DataLoaders
 train_loader = data.DataLoader(
     graph_dataset, batch_size=32, collate_fn=collate_fn,
@@ -264,13 +284,6 @@ val_loader = data.DataLoader(
     graph_dataset, batch_size=32, collate_fn=collate_fn,
     sampler=data.SubsetRandomSampler(idx_val)
 )
-
-''' # Don't need loader for test set for now, but mabbe need it in the future
-test_loader = data.DataLoader(
-    graph_dataset, batch_size=32, collate_fn=collate_fn,
-    sampler=data.SubsetRandomSampler(idx_test)
-)
-'''
 
 # Wrap in TorchLoader
 loader = TorchLoader(train_loader, val_loader)
@@ -396,7 +409,8 @@ nets = [
         hidden_features=cfg['model']['hidden_features'],
         num_transforms=cfg['model']['num_transforms'],
         embedding_net=embedding,
-        x_normalize=False,
+        x_normalize=False,       # can't apply affine transform to PyG batches
+        theta_normalize=True,    # LAMPE handles z-normalization of theta internally
         device=device,
     )
 ]

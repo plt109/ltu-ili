@@ -5,6 +5,10 @@ out_dir: "{save_base}/{num_samples}totalsamples_{embedding_flavour}embedding"
 wandb:
   project: "my-sbi-project"
   entity: "plt109"          # smt like team/username
+  group: "ambe-3param"
+  tags:
+    - "log-cs2-norm"
+    - "theta-norm"
 
 data:
   base_dir: /home/puehlengt/appletree/notebooks
