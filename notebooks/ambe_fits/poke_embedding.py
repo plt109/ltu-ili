@@ -288,8 +288,9 @@ val_loader = data.DataLoader(
 # Wrap in TorchLoader
 loader = TorchLoader(train_loader, val_loader)
 
-
 # %%
+from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
+
 # Design a simple Deep Set embedder
 class DeepSet(nn.Module):
     def __init__(self, in_channels, hidden_layers, hidden_channels, out_channels):
@@ -307,9 +308,16 @@ class DeepSet(nn.Module):
 
         self.node_mlp = nn.Sequential(*layers)
 
-        # Global MLP applied to the aggregated global features
+        # Projects event count (scalar) to hidden_channels so it has equal
+        # representation alongside mean_pool and max_pool in the global MLP
+        self.count_mlp = nn.Sequential(
+            nn.Linear(1, hidden_channels),
+            nn.ReLU(),
+        )
+
+        # Global MLP: input is mean_pool + max_pool + count_embed = 3 * hidden_channels
         self.global_mlp = nn.Sequential(
-            nn.Linear(hidden_channels * 2, hidden_channels), # cause pooling max and mean, so 2x hidden_channels
+            nn.Linear(hidden_channels * 3, hidden_channels),
             nn.ReLU(),
             nn.Linear(hidden_channels, out_channels)
         )
@@ -324,11 +332,15 @@ class DeepSet(nn.Module):
         mean_pool = global_mean_pool(node_embed, batch)
         max_pool = global_max_pool(node_embed, batch)
 
-        # Concatenate pooled features and apply global transformation
-        global_embed = torch.cat([mean_pool, max_pool], dim=1)
-        
-        return self.global_mlp(global_embed)
+        # Count events per graph and project to hidden_channels
+        ones = torch.ones(node_features.shape[0], 1, device=node_features.device)
+        n_events = global_add_pool(ones, batch)  # shape: (batch_size, 1)
+        count_embed = self.count_mlp(n_events)
 
+        # Concatenate pooled features and event count embedding
+        global_embed = torch.cat([mean_pool, max_pool, count_embed], dim=1)
+
+        return self.global_mlp(global_embed)
 
 
 # %%
