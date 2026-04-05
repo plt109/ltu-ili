@@ -37,7 +37,7 @@ from torch.utils import data
 # PyTorch Geometric imports for graph/set data
 from torch_geometric.data import Data as PYGData
 from torch_geometric.loader.dataloader import Collater
-from torch_geometric.nn import global_mean_pool, global_max_pool
+from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
 # ltu-ili imports for inference and validation
 import ili
@@ -288,9 +288,8 @@ val_loader = data.DataLoader(
 # Wrap in TorchLoader
 loader = TorchLoader(train_loader, val_loader)
 
-# %%
-from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
+# %%
 # Design a simple Deep Set embedder
 class DeepSet(nn.Module):
     def __init__(self, in_channels, hidden_layers, hidden_channels, out_channels):
@@ -308,7 +307,7 @@ class DeepSet(nn.Module):
 
         self.node_mlp = nn.Sequential(*layers)
 
-        # Projects event count (scalar) to hidden_channels so it has equal
+        # Projects log(event count) to hidden_channels so it has equal
         # representation alongside mean_pool and max_pool in the global MLP
         self.count_mlp = nn.Sequential(
             nn.Linear(1, hidden_channels),
@@ -332,10 +331,10 @@ class DeepSet(nn.Module):
         mean_pool = global_mean_pool(node_embed, batch)
         max_pool = global_max_pool(node_embed, batch)
 
-        # Count events per graph and project to hidden_channels
+        # Count events per graph, log-normalized to match scale of pooled features
         ones = torch.ones(node_features.shape[0], 1, device=node_features.device)
-        n_events = global_add_pool(ones, batch)  # shape: (batch_size, 1)
-        count_embed = self.count_mlp(n_events)
+        n_events = global_add_pool(ones, batch)   # shape: (batch_size, 1)
+        count_embed = self.count_mlp(torch.log(n_events))
 
         # Concatenate pooled features and event count embedding
         global_embed = torch.cat([mean_pool, max_pool, count_embed], dim=1)
