@@ -148,6 +148,10 @@ _, DIM_DATA = _events.shape
 # %%
 print(f'Dataset loaded with {len(dataset):.0e} samples, each with {DIM_DATA} data dimensions and {DIM_THETA} parameter dimensions.')
 
+# %% [markdown]
+# ## Checking prior and input param distributions
+# They should be the same (by eye)
+
 # %%
 zzparams = []
 cnt = 0
@@ -197,10 +201,11 @@ for i in range(3):
 
     #axes[i].set_xlim(-5, 5)
     #axes[i].set_ylim(-5, 5)
-    axes[i].set_title(f'Sample {i+1}, {(len(x_pts))} events\ng1={theta_val[0]:.2f}, g2={theta_val[1]:.2f}, NR rate={theta_val[2]:.2f}')
+    axes[i].set_title(f'Sample {i+1}, {(len(x_pts))} events\ng1={theta_val[0]:.4f}, g2={theta_val[1]:.2f}, NR rate={theta_val[2]:.2f}')
     if i == 0:
         axes[i].legend()
 plt.tight_layout()
+#plt.savefig('poke_embedding_samples.png')
 plt.show()
 
 
@@ -223,7 +228,8 @@ class GraphData(data.Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
         x = item.x.float()
-        # Physics-motivated transform: log(cS2), keep cS1 linear
+
+        # We usually log cs2 cause it's huge
         x = torch.stack([x[:, 0], torch.log(x[:, 1])], dim=1)
         if self.events_mean is not None:
             x = (x - self.events_mean) / self.events_std
@@ -291,6 +297,22 @@ loader = TorchLoader(train_loader, val_loader)
 
 # %%
 # Design a simple Deep Set embedder
+def global_quantile_pool(x, batch, q):
+    """Compute per-graph quantiles of node features.
+    x: (total_nodes, channels), batch: (total_nodes,), q: 1D tensor of quantile levels
+    returns: (num_graphs, channels * len(q))
+    """
+    if batch is None:  # single graph (inference time), treat all nodes as graph 0
+        batch = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
+    num_graphs = batch.max().item() + 1
+    out = []
+    for i in range(num_graphs):
+        mask = (batch == i)
+        quantiles = torch.quantile(x[mask].float(), q, dim=0)  # (len(q), channels)
+        out.append(quantiles.flatten())                          # (len(q) * channels,)
+    return torch.stack(out)                                      # (num_graphs, len(q) * channels)
+
+
 class DeepSet(nn.Module):
     def __init__(self, in_channels, hidden_layers, hidden_channels, out_channels):
         super().__init__()
@@ -308,15 +330,16 @@ class DeepSet(nn.Module):
         self.node_mlp = nn.Sequential(*layers)
 
         # Projects log(event count) to hidden_channels so it has equal
-        # representation alongside mean_pool and max_pool in the global MLP
+        # representation alongside the pooled features in the global MLP
         self.count_mlp = nn.Sequential(
             nn.Linear(1, hidden_channels),
             nn.ReLU(),
         )
 
-        # Global MLP: input is mean_pool + max_pool + count_embed = 3 * hidden_channels
+        # Global MLP: input is mean_pool + max_pool + q1_pool + q3_pool + count_embed
+        #             = 5 * hidden_channels
         self.global_mlp = nn.Sequential(
-            nn.Linear(hidden_channels * 3, hidden_channels),
+            nn.Linear(hidden_channels * 5, hidden_channels),
             nn.ReLU(),
             nn.Linear(hidden_channels, out_channels)
         )
@@ -327,17 +350,21 @@ class DeepSet(nn.Module):
         # Apply node-wise transformation
         node_embed = self.node_mlp(node_features)
 
-        # Pool features globally using both mean and max to ensure permutation invariance
+        # Pool features globally (permutation invariant)
         mean_pool = global_mean_pool(node_embed, batch)
-        max_pool = global_max_pool(node_embed, batch)
+        max_pool  = global_max_pool(node_embed, batch)
+        q         = torch.tensor([0.25, 0.75], device=node_features.device)
+        q13_pool  = global_quantile_pool(node_embed, batch, q)  # (batch_size, 2 * hidden_channels)
+        q1_pool   = q13_pool[:, :node_embed.shape[1]]           # (batch_size, hidden_channels)
+        q3_pool   = q13_pool[:, node_embed.shape[1]:]           # (batch_size, hidden_channels)
 
         # Count events per graph, log-normalized to match scale of pooled features
-        ones = torch.ones(node_features.shape[0], 1, device=node_features.device)
-        n_events = global_add_pool(ones, batch)   # shape: (batch_size, 1)
+        ones        = torch.ones(node_features.shape[0], 1, device=node_features.device)
+        n_events    = global_add_pool(ones, batch)
         count_embed = self.count_mlp(torch.log(n_events))
 
-        # Concatenate pooled features and event count embedding
-        global_embed = torch.cat([mean_pool, max_pool, count_embed], dim=1)
+        # Concatenate all pooled features
+        global_embed = torch.cat([mean_pool, max_pool, q1_pool, q3_pool, count_embed], dim=1)
 
         return self.global_mlp(global_embed)
 
@@ -397,8 +424,6 @@ prior = ili.utils.distributions_pt.IndependentTruncatedNormal(
 # %%
 prior, type(prior)
 
-
-# %%
 
 # %%
 class WandbLampeRunner(LampeRunner):
@@ -472,7 +497,7 @@ ax.legend()
 ind = 0
 test_idx = idx_test[ind]
 
-x_ = graph_dataset[test_idx] # Events. torch_geometric.data.data.Data object lol
+x_ = graph_dataset[test_idx] # Events. torch_geometric.data.data.Data object lol, already z-normalized, cs2logged
 y_ = x_.y[0].numpy() # True parameter values
 
 torch.manual_seed(1234)
@@ -579,5 +604,7 @@ fig = metric(
     posterior=posterior_ensemble,
     x=graph_dataset, theta=params
 )
+
+# %%
 
 # %%
