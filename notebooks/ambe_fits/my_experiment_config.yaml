@@ -17,7 +17,7 @@ data:
   num_samples: 2000
 
 embedding:
-  flavour: logncount_q1q3
+  flavour: matts_logncount
   in_channels: 2
   output_size: 8
   hidden_layers: 2

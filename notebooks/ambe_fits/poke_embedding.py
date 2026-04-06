@@ -297,22 +297,6 @@ loader = TorchLoader(train_loader, val_loader)
 
 # %%
 # Design a simple Deep Set embedder
-def global_quantile_pool(x, batch, q):
-    """Compute per-graph quantiles of node features.
-    x: (total_nodes, channels), batch: (total_nodes,), q: 1D tensor of quantile levels
-    returns: (num_graphs, channels * len(q))
-    """
-    if batch is None:  # single graph (inference time), treat all nodes as graph 0
-        batch = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
-    num_graphs = batch.max().item() + 1
-    out = []
-    for i in range(num_graphs):
-        mask = (batch == i)
-        quantiles = torch.quantile(x[mask].float(), q, dim=0)  # (len(q), channels)
-        out.append(quantiles.flatten())                          # (len(q) * channels,)
-    return torch.stack(out)                                      # (num_graphs, len(q) * channels)
-
-
 class DeepSet(nn.Module):
     def __init__(self, in_channels, hidden_layers, hidden_channels, out_channels):
         super().__init__()
@@ -336,10 +320,9 @@ class DeepSet(nn.Module):
             nn.ReLU(),
         )
 
-        # Global MLP: input is mean_pool + max_pool + q1_pool + q3_pool + count_embed
-        #             = 5 * hidden_channels
+        # Global MLP: input is mean_pool + max_pool + count_embed = 3 * hidden_channels
         self.global_mlp = nn.Sequential(
-            nn.Linear(hidden_channels * 5, hidden_channels),
+            nn.Linear(hidden_channels * 3, hidden_channels),
             nn.ReLU(),
             nn.Linear(hidden_channels, out_channels)
         )
@@ -353,10 +336,6 @@ class DeepSet(nn.Module):
         # Pool features globally (permutation invariant)
         mean_pool = global_mean_pool(node_embed, batch)
         max_pool  = global_max_pool(node_embed, batch)
-        q         = torch.tensor([0.25, 0.75], device=node_features.device)
-        q13_pool  = global_quantile_pool(node_embed, batch, q)  # (batch_size, 2 * hidden_channels)
-        q1_pool   = q13_pool[:, :node_embed.shape[1]]           # (batch_size, hidden_channels)
-        q3_pool   = q13_pool[:, node_embed.shape[1]:]           # (batch_size, hidden_channels)
 
         # Count events per graph, log-normalized to match scale of pooled features
         ones        = torch.ones(node_features.shape[0], 1, device=node_features.device)
@@ -364,7 +343,7 @@ class DeepSet(nn.Module):
         count_embed = self.count_mlp(torch.log(n_events))
 
         # Concatenate all pooled features
-        global_embed = torch.cat([mean_pool, max_pool, q1_pool, q3_pool, count_embed], dim=1)
+        global_embed = torch.cat([mean_pool, max_pool, count_embed], dim=1)
 
         return self.global_mlp(global_embed)
 
@@ -604,7 +583,3 @@ fig = metric(
     posterior=posterior_ensemble,
     x=graph_dataset, theta=params
 )
-
-# %%
-
-# %%
