@@ -66,27 +66,21 @@ class DeepSet(nn.Module):
             layers.append(nn.Linear(hidden_channels, hidden_channels))
         self.node_mlp = nn.Sequential(*layers)
 
-        self.count_mlp = nn.Sequential(
-            nn.Linear(1, hidden_channels),
-            nn.ReLU(),
-        )
-
-        # Global MLP: input is mean_pool + max_pool + count_embed = 3 * hidden_channels
+        # Global MLP: input is mean_pool + max_pool + log(n_events) = 2 * hidden_channels + 1
         self.global_mlp = nn.Sequential(
-            nn.Linear(hidden_channels * 3, hidden_channels),
+            nn.Linear(hidden_channels * 2 + 1, hidden_channels),
             nn.ReLU(),
             nn.Linear(hidden_channels, out_channels),
         )
 
     def forward(self, x):
         node_features, batch = x.x, x.batch
-        node_embed  = self.node_mlp(node_features)
-        mean_pool   = global_mean_pool(node_embed, batch)
-        max_pool    = global_max_pool(node_embed, batch)
-        ones        = torch.ones(node_features.shape[0], 1, device=node_features.device)
-        n_events    = global_add_pool(ones, batch)
-        count_embed = self.count_mlp(torch.log(n_events))
-        return self.global_mlp(torch.cat([mean_pool, max_pool, count_embed], dim=1))
+        node_embed = self.node_mlp(node_features)
+        mean_pool  = global_mean_pool(node_embed, batch)
+        max_pool   = global_max_pool(node_embed, batch)
+        ones       = torch.ones(node_features.shape[0], 1, device=node_features.device)
+        n_events   = global_add_pool(ones, batch)
+        return self.global_mlp(torch.cat([mean_pool, max_pool, torch.log(n_events)], dim=1))
 
 
 class GraphData(data.Dataset):
@@ -117,43 +111,12 @@ class WandbLampeRunner(LampeRunner):
 # Per-run training function
 # ---------------------------------------------------------------------------
 
-def train_one(hidden_size, hidden_layers, gpu_id):
+def train_one(hidden_size, hidden_layers, gpu_id, graph_dataset, idx_train, idx_val, idx_test, all_params):
     device   = torch.device(f'cuda:{gpu_id}' if torch.cuda.is_available() else 'cpu')
     tag      = f"h{hidden_size}_l{hidden_layers}_{N_SAMPLES}sims"
-    out_dir  = f"3_param_trained_models/arch_scan/{tag}"
+    out_dir  = f"3_param_trained_models/arch_scan_logncount_scalar/{tag}"
     run_name = f"nsf_t3_{tag}"
     print(f"[{tag}] starting on {device}")
-
-    # --- load data ---
-    aa         = np.load(DATA_PATH, allow_pickle=True).item()
-    param_bag  = aa['param_bag']
-    events_bag = aa['events_bag']
-
-    subset = []
-    for i in range(N_SAMPLES):
-        _events = torch.tensor(events_bag[i].T)
-        _params = torch.tensor([v for v in param_bag[i].values()]).reshape(1, -1)
-        subset.append(PYGData(x=_events, y=_params))
-
-    # --- split ---
-    rng       = np.random.default_rng(SPLIT_SEED)
-    perm      = rng.permutation(N_SAMPLES)
-    idx_test  = perm[:N_TEST]
-    idx_rest  = perm[N_TEST:]
-    n_train   = int((1 - VALIDATION_FRACTION) * len(idx_rest))
-    idx_train = idx_rest[:n_train]
-    idx_val   = idx_rest[n_train:]
-
-    # --- events normalization ---
-    _train_events = []
-    for idx in idx_train:
-        x = subset[idx].x.float()
-        _train_events.append(torch.stack([x[:, 0], torch.log(x[:, 1])], dim=1))
-    _train_events = torch.cat(_train_events, dim=0)
-    events_mean   = _train_events.mean(dim=0)
-    events_std    = _train_events.std(dim=0).clamp(min=1e-8)
-
-    graph_dataset = GraphData(subset, events_mean, events_std)
     collater      = Collater(dataset=graph_dataset, follow_batch='y')
 
     def collate_fn(batch):
@@ -205,7 +168,7 @@ def train_one(hidden_size, hidden_layers, gpu_id):
         entity=WANDB_CFG['entity'],
         group=WANDB_CFG['group'],
         name=run_name,
-        tags=['arch-scan', 'logncount-embed'],
+        tags=['arch-scan', 'logncount-scalar'],
         config=dict(
             hidden_size=hidden_size, hidden_layers=hidden_layers,
             n_samples=N_SAMPLES, gpu_id=gpu_id,
@@ -222,10 +185,6 @@ def train_one(hidden_size, hidden_layers, gpu_id):
     posterior_ensemble, _ = runner(loader=loader)
 
     # --- plots ---
-    all_params = np.array([
-        [v for v in param_bag[i].values()] for i in range(N_SAMPLES)
-    ])
-
     x_obs      = graph_dataset[idx_test[0]]
     theta_true = x_obs.y[0].numpy()
 
@@ -272,12 +231,52 @@ if __name__ == '__main__':
     print(f"Found {n_gpus} GPU(s). Launching {len(combos)} processes "
           f"({len(HIDDEN_SIZE_LIST)} sizes x {len(HIDDEN_LAYERS_LIST)} depths).")
 
+    # --- load data once in main process ---
+    print("Loading data...")
+    aa         = np.load(DATA_PATH, allow_pickle=True).item()
+    param_bag  = aa['param_bag']
+    events_bag = aa['events_bag']
+
+    subset = []
+    for i in range(N_SAMPLES):
+        _events = torch.tensor(events_bag[i].T)
+        _params = torch.tensor([v for v in param_bag[i].values()]).reshape(1, -1)
+        subset.append(PYGData(x=_events, y=_params))
+
+    all_params = np.array([
+        [v for v in param_bag[i].values()] for i in range(N_SAMPLES)
+    ])
+
+    # --- split (same for all runs) ---
+    rng       = np.random.default_rng(SPLIT_SEED)
+    perm      = rng.permutation(N_SAMPLES)
+    idx_test  = perm[:N_TEST]
+    idx_rest  = perm[N_TEST:]
+    n_train   = int((1 - VALIDATION_FRACTION) * len(idx_rest))
+    idx_train = idx_rest[:n_train]
+    idx_val   = idx_rest[n_train:]
+
+    # --- normalization (same for all runs) ---
+    _train_events = []
+    for idx in idx_train:
+        x = subset[idx].x.float()
+        _train_events.append(torch.stack([x[:, 0], torch.log(x[:, 1])], dim=1))
+    _train_events = torch.cat(_train_events, dim=0)
+    events_mean   = _train_events.mean(dim=0)
+    events_std    = _train_events.std(dim=0).clamp(min=1e-8)
+
+    graph_dataset = GraphData(subset, events_mean, events_std)
+    print("Data loaded. Spawning processes...")
+
     mp.set_start_method('spawn')
 
     processes = []
     for i, (hidden_size, hidden_layers) in enumerate(combos):
         gpu_id = i % max(n_gpus, 1)
-        p = mp.Process(target=train_one, args=(hidden_size, hidden_layers, gpu_id))
+        p = mp.Process(
+            target=train_one,
+            args=(hidden_size, hidden_layers, gpu_id, graph_dataset, idx_train, idx_val, idx_test, all_params),
+        )
         p.start()
         processes.append(p)
 
@@ -286,4 +285,4 @@ if __name__ == '__main__':
 
     print("\nAll runs complete.")
 
-# 6 April 2026, 6:51pm
+# 6 April 2026, 11:08PM
