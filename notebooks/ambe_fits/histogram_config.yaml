@@ -8,21 +8,21 @@ wandb:
   group: "ambe-3param"
   tags:
     - "histogram-25x25"
-    - "log-cs2"
-    - "theta-norm"
 
 data:
   base_dir: /home/puehlengt/appletree/notebooks
   fname: harvested_testsims_3params.npy
-  num_samples: 7000
+  num_samples: 10000
 
 histogram:
-  n_bins: 25
+  n_bins: 50
+  cs1_range: [0, 150]
+  log_cs2_range: [2.1, 4.1]
 
 model:
   type: nsf
-  hidden_features: 32
-  num_transforms: 3
+  hidden_features: 128
+  num_transforms: 5
 
 training:
   batch_size: 32
