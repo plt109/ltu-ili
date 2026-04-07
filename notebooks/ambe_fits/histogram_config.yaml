@@ -1,0 +1,30 @@
+# histogram_config.yaml
+save_base: 3_param_trained_models
+out_dir: "{save_base}/{num_samples}totalsamples_histogram_{n_bins}bins_nsf_h{hidden_features}_t{num_transforms}"
+
+wandb:
+  project: "my-sbi-project"
+  entity: "plt109"
+  group: "ambe-3param"
+  tags:
+    - "histogram-25x25"
+    - "log-cs2"
+    - "theta-norm"
+
+data:
+  base_dir: /home/puehlengt/appletree/notebooks
+  fname: harvested_testsims_3params.npy
+  num_samples: 7000
+
+histogram:
+  n_bins: 25
+
+model:
+  type: nsf
+  hidden_features: 32
+  num_transforms: 3
+
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  stop_after_epochs: 20
