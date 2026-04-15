@@ -70,6 +70,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', type=int, default=None)
     parser.add_argument('--learning_rate', type=float, default=None)
+    parser.add_argument('--weight_decay', type=float, default=None)
     args = parser.parse_args()
 
     with open("histogram_config.yaml") as f:
@@ -78,20 +79,23 @@ def main():
     # WANDB_MODE=offline can be set in environment for offline runs
     wandb.init(config=cfg)
 
-    # Sweep agent injects flat batch_size/learning_rate into wandb.config;
+    # Sweep agent injects flat params into wandb.config;
     # fall back to CLI args, then config file
     bs = (wandb.config['batch_size'] if 'batch_size' in wandb.config
           else (args.batch_size or cfg['training']['batch_size']))
     lr = (wandb.config['learning_rate'] if 'learning_rate' in wandb.config
           else (args.learning_rate or cfg['training']['learning_rate']))
+    wd = (wandb.config['weight_decay'] if 'weight_decay' in wandb.config
+          else (args.weight_decay or cfg['training']['weight_decay']))
     cfg['training']['batch_size'] = bs
     cfg['training']['learning_rate'] = lr
+    cfg['training']['weight_decay'] = wd
 
     cfg['out_dir'] = (
         f"{cfg['save_base']}/{cfg['data']['num_samples']}totalsamples_"
         f"histogram_{cfg['histogram']['n_bins']}bins_"
         f"nsf_h{cfg['model']['hidden_features']}_t{cfg['model']['num_transforms']}_"
-        f"bs{bs}_lr{lr:.0e}"
+        f"bs{bs}_lr{lr:.0e}_wd{wd:.0e}"
     )
     wandb.config.update({'out_dir': cfg['out_dir']}, allow_val_change=True)
 
@@ -187,6 +191,7 @@ def main():
         train_args={
             'training_batch_size': bs,
             'learning_rate': lr,
+            'weight_decay': wd,
             'stop_after_epochs': cfg['training']['stop_after_epochs'],
             'clip_max_norm': cfg['training']['clip_max_norm'],
             'max_epochs': cfg['training']['max_epochs'],

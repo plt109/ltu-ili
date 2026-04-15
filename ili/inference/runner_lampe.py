@@ -245,7 +245,8 @@ class LampeRunner():
             # define optimizer
             optimizer = torch.optim.Adam(
                 model.parameters(),
-                lr=self.train_args["learning_rate"]
+                lr=self.train_args["learning_rate"],
+                weight_decay=self.train_args.get("weight_decay", 0.0),
             )
             stepper = lampe.utils.GDStep(
                 optimizer, clip=self.train_args["clip_max_norm"])

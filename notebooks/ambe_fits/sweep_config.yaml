@@ -1,11 +1,11 @@
 program: train_histogram.py
 method: grid
-name: histogram-lr-bs-scan-h64t3-50k
+name: histogram-wd-lr-scan-h64t3-50k-bs256
 project: my-sbi-project
 entity: plt109
 
 parameters:
-  batch_size:
-    values: [32, 128, 256]
   learning_rate:
-    values: [0.0001, 0.0003, 0.001]
+    values: [0.0001, 0.0003]
+  weight_decay:
+    values: [0.0001, 0.001, 0.01]
