@@ -1,5 +1,5 @@
 # histogram_config.yaml
-save_base: 3_param_trained_models
+save_base: 3_param_trained_models/lr_batch_sweep
 out_dir: "{save_base}/{num_samples}totalsamples_histogram_{n_bins}bins_nsf_h{hidden_features}_t{num_transforms}"
 
 wandb:
@@ -19,10 +19,12 @@ histogram:
 
 model:
   type: nsf
-  hidden_features: 128
-  num_transforms: 5
+  hidden_features: 64
+  num_transforms: 3
 
 training:
   batch_size: 32
   learning_rate: 0.0001
-  stop_after_epochs: 20
+  stop_after_epochs: 100
+  clip_max_norm: 5
+  max_epochs: 10000
