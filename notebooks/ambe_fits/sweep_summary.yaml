@@ -1,0 +1,11 @@
+program: train_summary.py
+method: grid
+name: summary-arch-scan-50k
+project: my-sbi-project
+entity: plt109
+
+parameters:
+  hidden_features:
+    values: [16, 32, 64]
+  num_transforms:
+    values: [2, 3]
