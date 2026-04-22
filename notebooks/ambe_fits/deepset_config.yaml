@@ -1,15 +1,5 @@
-# my_experiment_config.yaml
-save_base: 3_param_trained_models
-out_dir: "{save_base}/{num_samples}totalsamples_{embedding_flavour}embedding"
-
-wandb:
-  project: "my-sbi-project"
-  entity: "plt109"          # smt like team/username
-  group: "ambe-3param"
-  tags:
-    - "log-cs2-norm"
-    - "theta-norm"
-    - "log-event-count-embed"
+# deepset_config.yaml
+save_base: 3_param_trained_models/deepset_sweep
 
 data:
   base_dir: /home/puehlengt/appletree/notebooks
@@ -17,7 +7,6 @@ data:
   num_samples: 50000
 
 embedding:
-  flavour: matts_logncount
   in_channels: 2
   output_size: 8
   hidden_layers: 2
@@ -31,7 +20,7 @@ model:
 training:
   batch_size: 256
   learning_rate: 0.0001
+  weight_decay: 0.0
   stop_after_epochs: 100
   clip_max_norm: 5
   max_epochs: 10000
-  weight_decay: 0.0

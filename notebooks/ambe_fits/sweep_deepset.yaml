@@ -1,0 +1,11 @@
+program: train_deepset.py
+method: grid
+name: deepset-arch-scan-50k
+project: my-sbi-project
+entity: plt109
+
+parameters:
+  hidden_size:
+    values: [16, 32, 64]
+  hidden_layers:
+    values: [1, 2]
