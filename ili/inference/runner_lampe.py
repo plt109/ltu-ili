@@ -12,6 +12,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
+from torch.optim.swa_utils import AveragedModel, update_bn
 import lampe
 from pathlib import Path
 from typing import Dict, List, Callable, Optional
@@ -20,6 +21,17 @@ from ili.dataloaders import _BaseLoader
 from ili.utils import load_from_config, LampeEnsemble, load_nde_lampe
 
 logging.basicConfig(level=logging.INFO)
+
+
+class NoisyDataset(TensorDataset):
+    def __init__(self, *tensors, percentage=0.01):
+        super().__init__(*tensors)
+        self.percentage = percentage
+        self.stds = [torch.std(t, dim=0) * percentage for t in tensors]
+
+    def __getitem__(self, index):
+        tensors = super().__getitem__(index)
+        return tuple(t + torch.randn_like(t) * s for t, s in zip(tensors, self.stds))
 
 
 class LampeRunner():
@@ -68,9 +80,16 @@ class LampeRunner():
         self.engine = 'NPE'
         self.train_args = dict(
             training_batch_size=50, learning_rate=5e-4,
-            stop_after_epochs=30, clip_max_norm=5,
+            stop_after_epochs=30, clip_max_norm=5, weight_decay=0,
+            early_stopping=True,
+            lr_scheduler='ReduceLROnPlateau',
+            lr_decay_factor=1, lr_patience=10,
             max_epochs=int(1e10),
-            validation_fraction=0.1)
+            validation_fraction=0.1,
+            validation_smoothing_method="none",  # options: "none", "ema", "swa"
+            ema_decay=0.9,
+            noise_percent=0.,
+        )
         self.train_args.update(train_args)
         self.out_dir = out_dir
         if self.out_dir is not None:
@@ -181,7 +200,8 @@ class LampeRunner():
             x_train, x_val = x[~mask], x[mask]
             theta_train, theta_val = theta[~mask], theta[mask]
 
-            data_train = TensorDataset(x_train, theta_train)
+            data_train = NoisyDataset(x_train, theta_train, 
+                percentage=self.train_args["noise_percent"])
             data_val = TensorDataset(x_val, theta_val)
             train_loader = DataLoader(
                 data_train, shuffle=True,
@@ -204,6 +224,18 @@ class LampeRunner():
 
         negloss = torch.exp(log_prior - log_proposal) * log_posterior
         return -negloss.mean()
+    
+    def _evaluate_model(self, model, val_loader):
+        """Evaluate model on validation set."""
+        model.eval()
+        with torch.no_grad():
+            loss_val, count = [], 0
+            for x, theta in val_loader:
+                x, theta = x.to(self.device), theta.to(self.device)
+                loss_val.append(self._loss(model, theta, x) * len(theta))
+                count += len(theta)
+            loss_val = torch.stack(loss_val).sum().item()/count
+        return loss_val
 
     def _train_epoch(self, model, train_loader, val_loader, stepper):
         """Train a single epoch of a neural network model."""
@@ -212,8 +244,9 @@ class LampeRunner():
         loss_train, count = [], 0
         for x, theta in train_loader:
             x, theta = x.to(self.device), theta.to(self.device)
+            loss = self._loss(model, theta, x)
             loss_train.append(
-                stepper(self._loss(model, theta, x)) * len(theta))
+                stepper(loss) * len(theta))
             count += len(theta)
         loss_train = torch.stack(loss_train).sum().item()/count
 
@@ -228,35 +261,83 @@ class LampeRunner():
         return loss_train, loss_val
 
     def _train_round(self, models: List[Callable],
-                     train_loader: DataLoader, val_loader: DataLoader):
+                     train_loader: DataLoader, val_loader: DataLoader,
+                     verbose: bool = True):
         """Train a single round of inference for an ensemble of models."""
 
         # initialize models
         x_, y_ = next(iter(train_loader))
         models_rnd = [
-            model(x_, y_, self.prior).to(self.device)
+            model(train_loader, self.prior).to(self.device)
             for model in models
         ]
 
         posteriors, summaries = [], []
         for i, model in enumerate(models_rnd):
-            logging.info(f"Training model {i+1} / {len(models_rnd)}.")
+            if verbose:
+                logging.info(f"Training model {i+1} / {len(models_rnd)}.")
 
             # define optimizer
-            optimizer = torch.optim.Adam(
+            optimizer = torch.optim.AdamW(
                 model.parameters(),
                 lr=self.train_args["learning_rate"],
-                weight_decay=self.train_args.get("weight_decay", 0.0),
+                weight_decay=self.train_args["weight_decay"]
             )
             stepper = lampe.utils.GDStep(
                 optimizer, clip=self.train_args["clip_max_norm"])
 
+            # setup scheduler
+            scheduler_name = self.train_args.get(
+                'lr_scheduler', 'ReduceLROnPlateau')
+            if scheduler_name == 'ReduceLROnPlateau':
+                if self.train_args["lr_decay_factor"] < 1:
+                    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                        optimizer, factor=self.train_args["lr_decay_factor"],
+                        patience=self.train_args["lr_patience"])
+                else:
+                    scheduler = torch.optim.lr_scheduler.LambdaLR(
+                        optimizer, lr_lambda=lambda epoch: 1.0)
+            elif scheduler_name == 'CosineAnnealingLR':
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer,
+                    T_max=self.train_args['max_epochs'],
+                    eta_min=0,
+                )
+            else:
+                raise ValueError(f"Unknown lr_scheduler: {scheduler_name}")
+
             # train model
             best_val = float('inf')
             wait = 0
+            smoothing_method = self.train_args.get("validation_smoothing_method", "none").lower()
+            
             summary = {'training_log_probs': [], 'validation_log_probs': []}
+            
+            # Initialize smoothing strategy
+            averaged_model = None
+            if smoothing_method == "ema":
+                # EMA: decay controls weight on old average (higher decay = more smoothing)
+                # Formula: new_avg = decay * old_avg + (1 - decay) * current
+                ema_decay = self.train_args["ema_decay"]
+                
+                def ema_avg_fn(averaged_model_param, current_param, num_averaged):
+                    return ema_decay * averaged_model_param + (1 - ema_decay) * current_param
+                
+                averaged_model = AveragedModel(model, avg_fn=ema_avg_fn, use_buffers=True)
+                summary['smoothed_validation_log_probs'] = []
+            elif smoothing_method == "swa":
+                # SWA: simple averaging
+                averaged_model = AveragedModel(model, use_buffers=True)
+                summary['smoothed_validation_log_probs'] = []
+            elif smoothing_method == "none":
+                pass
+            else:
+                raise ValueError(
+                    f"Unknown validation_smoothing_method: {smoothing_method}. "
+                    "Options are: 'none', 'ema', 'swa'")
+            
             with tqdm(iter(range(self.train_args["max_epochs"])),
-                      unit=' epochs') as tq:
+                      unit=' epochs', disable=not verbose) as tq:
                 for epoch in tq:
                     loss_train, loss_val = self._train_epoch(
                         model=model,
@@ -264,31 +345,59 @@ class LampeRunner():
                         val_loader=val_loader,
                         stepper=stepper,
                     )
-                    tq.set_postfix(
-                        loss=loss_train,
-                        loss_val=loss_val,
-                    )
+                    
+                    # Update averaged model and compute smoothed loss
+                    if smoothing_method in ["ema", "swa"]:
+                        averaged_model.update_parameters(model)
+                        smoothed_loss = self._evaluate_model(averaged_model, val_loader)
+                    else:
+                        smoothed_loss = loss_val
+                    
+                    # Build progress bar dict
+                    postfix_dict = {
+                        "loss": loss_train,
+                        "loss_val": loss_val,
+                        "lr": scheduler.get_last_lr()[0]
+                    }
+                    if smoothing_method != "none":
+                        postfix_dict["smoothed_val"] = smoothed_loss
+                    tq.set_postfix(**postfix_dict)
+                    
+                    if scheduler_name == 'ReduceLROnPlateau':
+                        if self.train_args["lr_decay_factor"] < 1:
+                            scheduler.step(smoothed_loss)
+                    elif scheduler_name == 'CosineAnnealingLR':
+                        scheduler.step()
+                    
                     summary['training_log_probs'].append(-loss_train)
                     summary['validation_log_probs'].append(-loss_val)
+                    if smoothing_method != "none":
+                        summary['smoothed_validation_log_probs'].append(-smoothed_loss)
 
-                    # check for convergence
-                    if loss_val < best_val:
-                        best_val = loss_val
-                        best_model = deepcopy(model.state_dict())
-                        wait = 0
-                    elif wait > self.train_args["stop_after_epochs"]:
-                        break
+                    # check for convergence using smoothed validation loss
+                    if self.train_args.get("early_stopping", True):
+                        if smoothed_loss < best_val:
+                            best_val = smoothed_loss
+                            best_model = deepcopy(model.state_dict())
+                            wait = 0
+                        elif wait > self.train_args["stop_after_epochs"]:
+                            break
+                        else:
+                            wait += 1
                     else:
-                        wait += 1
+                        if smoothed_loss < best_val:
+                            best_val = smoothed_loss
                 else:
-                    logging.warning(
-                        "Training did not converge in "
-                        f"{self.train_args['max_epochs']} epochs.")
+                    if self.train_args.get("early_stopping", True):
+                        logging.warning(
+                            "Training did not converge in "
+                            f"{self.train_args['max_epochs']} epochs.")
                 summary['best_validation_log_prob'] = -best_val
                 summary['epochs_trained'] = epoch
 
             # save model
-            model.load_state_dict(best_model)
+            if self.train_args.get("early_stopping", True):
+                model.load_state_dict(best_model)
             posteriors.append(model)
             summaries.append(summary)
 
@@ -320,7 +429,8 @@ class LampeRunner():
         with open(self.out_dir / str_s, "w") as handle:
             json.dump(summaries, handle)
 
-    def __call__(self, loader: _BaseLoader, seed: int = None):
+    def __call__(self, loader: _BaseLoader, seed: int = None,
+                 verbose: bool = True):
         """Train your posterior and save it to file
 
         Args:
@@ -333,7 +443,8 @@ class LampeRunner():
             torch.manual_seed(seed)
 
         # setup training engines for each model in the ensemble
-        logging.info("MODEL INFERENCE CLASS: NPE")
+        if verbose:
+            logging.info("MODEL INFERENCE CLASS: NPE")
 
         # load single-round data
         train_loader, val_loader = self._prepare_loader(loader)
@@ -344,8 +455,11 @@ class LampeRunner():
             models=self.nets,
             train_loader=train_loader,
             val_loader=val_loader,
+            verbose=verbose
         )
-        logging.info(f"It took {time.time() - t0} seconds to train models.")
+        if verbose:
+            logging.info(
+                f"It took {time.time() - t0} seconds to train models.")
 
         # save if output path is specified
         if self.out_dir is not None:
