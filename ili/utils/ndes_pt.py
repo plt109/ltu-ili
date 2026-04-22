@@ -27,6 +27,7 @@ import warnings
 from tqdm import tqdm
 from typing import List, Any, Optional
 from copy import deepcopy
+from sklearn.preprocessing import StandardScaler
 from torch.distributions import Distribution
 from torch.distributions.transforms import (
     identity_transform, AffineTransform, Transform)
@@ -325,7 +326,8 @@ def load_nde_lampe(
 
     # check the model parameterizations
     if model == 'mdn':
-        model_defaults = dict(hidden_features=16, num_components=3)
+        model_defaults = dict(hidden_features=16, hidden_depth=3,
+                              num_components=3)
     else:
         model_defaults = dict(hidden_features=16, num_transforms=2)
     if not (set(model_args.keys()) <= set(model_defaults.keys())):
@@ -338,7 +340,8 @@ def load_nde_lampe(
 
     # setup models
     if model == 'mdn':  # for mixture density networks
-        model_args['hidden_features'] = [model_args['hidden_features']] * 3
+        model_args['hidden_features'] = [model_args['hidden_features']] * \
+            model_args.pop('hidden_depth', 3)
         model_args['components'] = model_args.pop('num_components', 2)
         flow_class = zuko.flows.mixture.GMM
     else:
@@ -431,9 +434,11 @@ class _Lampe_Net_Constructor():
             f"Device: {self.device}\n"
         )
 
-    def __call__(self, x_batch, theta_batch, prior):
+    def __call__(self, train_loader, prior):
 
         # pass data through embedding network
+        x_batch, theta_batch = next(iter(train_loader))
+        dtype = x_batch.dtype
         z_batch = self.embedding_net(x_batch.cpu())
         self.embedding_net = self.embedding_net.to(self.device)
         z_shape = z_batch.shape[1:]
@@ -457,8 +462,13 @@ class _Lampe_Net_Constructor():
         theta_transform = identity_transform
 
         if self.x_normalize:
-            x_mean = x_batch.mean(dim=0).to(self.device)
-            x_std = x_batch.std(dim=0).to(self.device)
+            scaler = StandardScaler()
+            for x_batch, _ in train_loader:
+                x_batch = x_batch.cpu().numpy()
+                scaler.partial_fit(x_batch)
+
+            x_mean = torch.tensor(scaler.mean_, dtype=dtype).to(self.device)
+            x_std = torch.tensor(scaler.scale_, dtype=dtype).to(self.device)
 
             # avoid division by zero
             x_std = torch.clamp(x_std, min=1e-16)
@@ -468,8 +478,15 @@ class _Lampe_Net_Constructor():
                 loc=x_mean, scale=x_std, event_dim=1)
 
         if self.theta_normalize:
-            theta_mean = theta_batch.mean(dim=0).to(self.device)
-            theta_std = theta_batch.std(dim=0).to(self.device)
+            scaler = StandardScaler()
+            for _, theta_batch in train_loader:
+                theta_batch = theta_batch.cpu().numpy()
+                scaler.partial_fit(theta_batch)
+
+            theta_mean = torch.tensor(
+                scaler.mean_, dtype=dtype).to(self.device)
+            theta_std = torch.tensor(
+                scaler.scale_, dtype=dtype).to(self.device)
 
             # avoid division by zero
             theta_std = torch.clamp(theta_std, min=1e-16)
