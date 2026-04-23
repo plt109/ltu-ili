@@ -81,10 +81,32 @@ class DeepSet(nn.Module):
         return self.global_mlp(torch.cat([mean_pool, max_pool, n_events_norm], dim=1))
 
 
+class PyGBatchWrapper:
+    """Wraps a PyG Batch to expose .dtype, which ndes_pt.__call__ expects on x_batch."""
+    def __init__(self, batch):
+        self._batch = batch
+        self.dtype = batch.x.dtype
+
+    def cpu(self):
+        return self._batch.cpu()
+
+    def __getattr__(self, name):
+        return getattr(self._batch, name)
+
+
 class WandbLampeRunner(LampeRunner):
+    def __init__(self, *args, checkpoint_every=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._epoch = 0
+        self._checkpoint_every = checkpoint_every
+
     def _train_epoch(self, model, train_loader, val_loader, stepper):
         loss_train, loss_val = super()._train_epoch(model, train_loader, val_loader, stepper)
         wandb.log({'train_log_prob': -loss_train, 'val_log_prob': -loss_val})
+        self._epoch += 1
+        if self._epoch % self._checkpoint_every == 0:
+            torch.save(model.state_dict(),
+                       self.out_dir / f'checkpoint_epoch{self._epoch}.pt')
         return loss_train, loss_val
 
 
@@ -92,7 +114,7 @@ def main():
     with open("deepset_config.yaml") as f:
         cfg = yaml.safe_load(f)
 
-    wandb.init(config=cfg)
+    wandb.init(config=cfg, project=cfg['wandb']['project'], entity=cfg['wandb']['entity'])
 
     hs = wandb.config.get('hidden_size',   cfg['embedding']['hidden_size'])
     hl = wandb.config.get('hidden_layers', cfg['embedding']['hidden_layers'])
@@ -102,28 +124,40 @@ def main():
     out_dir = (f"{cfg['save_base']}/"
                f"{cfg['data']['num_samples']}totalsamples_deepset_nsf"
                f"_h{cfg['model']['hidden_features']}_t{cfg['model']['num_transforms']}"
-               f"_emb_hs{hs}_hl{hl}")
+               f"_emb_hs{hs}_hl{hl}"
+               f"_lr{cfg['training']['learning_rate']}")
     wandb.config.update({'out_dir': out_dir}, allow_val_change=True)
     os.makedirs(out_dir, exist_ok=True)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:0')
 
-    # --- Load data ---
-    fname = f"{cfg['data']['base_dir']}/{cfg['data']['fname']}"
-    aa = np.load(fname, allow_pickle=True).item()
-    param_bag = aa['param_bag']
-    events_bag = aa['events_bag']
     num_samples = cfg['data']['num_samples']
+    N_TEST2 = 2000
 
-    # --- Build dataset ---
-    dataset = []
-    params = []
-    for i in range(num_samples):
-        _events = torch.tensor(events_bag[i].T)
-        _params = torch.tensor([v for v in param_bag[i].values()]).reshape(1, -1)
-        dataset.append(PYGData(x=_events, y=_params))
-        params.append(_params)
-    params = np.concatenate(params, axis=0)
+    # --- Load dataset ---
+    prebuilt_path = f"{cfg['data']['base_dir']}/{cfg['data'].get('prebuilt_fname', '')}"
+    if cfg['data'].get('prebuilt_fname') and os.path.exists(prebuilt_path):
+        print(f"Loading pre-built dataset from {prebuilt_path}...")
+        full_dataset = torch.load(prebuilt_path)
+        dataset = full_dataset[:num_samples]
+        dataset_test2 = full_dataset[num_samples:num_samples + N_TEST2]
+    else:
+        fname = f"{cfg['data']['base_dir']}/{cfg['data']['fname']}"
+        aa = np.load(fname, allow_pickle=True).item()
+        param_bag  = aa['param_bag']
+        events_bag = aa['events_bag']
+        dataset = []
+        for i in range(num_samples):
+            _events = torch.tensor(events_bag[i].T)
+            _params = torch.tensor([v for v in param_bag[i].values()]).reshape(1, -1)
+            dataset.append(PYGData(x=_events, y=_params))
+        dataset_test2 = []
+        for idx in range(num_samples, num_samples + N_TEST2):
+            _events = torch.tensor(events_bag[idx].T)
+            _params = torch.tensor([v for v in param_bag[idx].values()]).reshape(1, -1)
+            dataset_test2.append(PYGData(x=_events, y=_params))
+
+    params = np.array([d.y.numpy().flatten() for d in dataset])
 
     # --- Split ---
     np.random.seed(42)
@@ -161,7 +195,7 @@ def main():
 
     def collate_fn(batch):
         batch = collater(batch).to(device)
-        return batch, batch.y
+        return PyGBatchWrapper(batch), batch.y
 
     bs = cfg['training']['batch_size']
     train_loader = data.DataLoader(
@@ -210,6 +244,7 @@ def main():
     # --- Train ---
     runner = WandbLampeRunner(
         prior=prior, nets=nets, device=device,
+        checkpoint_every=cfg['training'].get('checkpoint_every', 10),
         train_args={
             'training_batch_size': bs,
             'learning_rate': cfg['training']['learning_rate'],
@@ -217,6 +252,9 @@ def main():
             'stop_after_epochs': cfg['training']['stop_after_epochs'],
             'clip_max_norm': cfg['training']['clip_max_norm'],
             'max_epochs': cfg['training']['max_epochs'],
+            'lr_scheduler': cfg['training'].get('lr_scheduler', 'ReduceLROnPlateau'),
+            'lr_decay_factor': cfg['training'].get('lr_decay_factor', 1),
+            'lr_patience': cfg['training'].get('lr_patience', 10),
         },
         proposal=None,
         out_dir=out_dir,
@@ -224,19 +262,8 @@ def main():
     posterior_ensemble, _ = runner(loader=loader)
 
     # --- Evaluate on test2 ---
-    N_TEST2 = 2000
-    idx_test2 = np.arange(num_samples, num_samples + N_TEST2)
-
-    test2_dataset = []
-    theta_test2 = []
-    for idx in idx_test2:
-        _events = torch.tensor(events_bag[idx].T)
-        _params = torch.tensor([v for v in param_bag[idx].values()]).reshape(1, -1)
-        test2_dataset.append(PYGData(x=_events, y=_params))
-        theta_test2.append(_params.numpy())
-    theta_test2 = np.concatenate(theta_test2, axis=0)
-
-    test2_graph = GraphData(test2_dataset, events_mean, events_std)
+    theta_test2 = np.array([d.y.numpy().flatten() for d in dataset_test2])
+    test2_graph = GraphData(dataset_test2, events_mean, events_std)
 
     param_names = list(apt_param_config.keys())
     metric = PosteriorCoverage(
