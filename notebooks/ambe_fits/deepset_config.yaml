@@ -22,14 +22,19 @@ model:
   hidden_features: 32
   num_transforms: 3
 
+hardware:
+  cuda_device: 5
+  num_workers: 0  # >0 requires data loading refactor (numpy arrays instead of PyG objects)
+
 training:
   batch_size: 256
   learning_rate: 0.0003
   weight_decay: 0.0
   stop_after_epochs: 30
   clip_max_norm: 5
-  max_epochs: 10000
-  lr_scheduler: ReduceLROnPlateau
-  lr_decay_factor: 0.5
-  lr_patience: 10
+  max_epochs: 1500
+  lr_scheduler: CosineAnnealingLR
+  # lr_scheduler: ReduceLROnPlateau
+  # lr_decay_factor: 0.5
+  # lr_patience: 10
   checkpoint_every: 10

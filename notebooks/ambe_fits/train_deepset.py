@@ -102,7 +102,11 @@ class WandbLampeRunner(LampeRunner):
 
     def _train_epoch(self, model, train_loader, val_loader, stepper):
         loss_train, loss_val = super()._train_epoch(model, train_loader, val_loader, stepper)
-        wandb.log({'train_log_prob': -loss_train, 'val_log_prob': -loss_val})
+        wandb.log({
+            'train_log_prob': -loss_train,
+            'val_log_prob': -loss_val,
+            'lr': stepper.optimizer.param_groups[0]['lr'],
+        })
         self._epoch += 1
         if self._epoch % self._checkpoint_every == 0:
             torch.save(model.state_dict(),
@@ -125,11 +129,12 @@ def main():
                f"{cfg['data']['num_samples']}totalsamples_deepset_nsf"
                f"_h{cfg['model']['hidden_features']}_t{cfg['model']['num_transforms']}"
                f"_emb_hs{hs}_hl{hl}"
-               f"_lr{cfg['training']['learning_rate']}")
+               f"_lr{cfg['training']['learning_rate']}"
+               f"_{cfg['training']['lr_scheduler']}")
     wandb.config.update({'out_dir': out_dir}, allow_val_change=True)
     os.makedirs(out_dir, exist_ok=True)
 
-    device = torch.device('cuda:0')
+    device = torch.device(f"cuda:{cfg['hardware']['cuda_device']}")
 
     num_samples = cfg['data']['num_samples']
     N_TEST2 = 2000
@@ -183,10 +188,14 @@ def main():
     n_events_mean = _train_n.mean().item()
     n_events_std  = _train_n.std().clamp(min=1e-8).item()
 
+    theta_mean = torch.tensor(params[idx_train].mean(axis=0), dtype=torch.float32)
+    theta_std  = torch.tensor(params[idx_train].std(axis=0),  dtype=torch.float32).clamp(min=1e-16)
+
     with open(f'{out_dir}/norm_stats.pkl', 'wb') as f:
         pickle.dump({
             'events_mean': events_mean, 'events_std': events_std,
             'n_events_mean': n_events_mean, 'n_events_std': n_events_std,
+            'theta_mean': theta_mean, 'theta_std': theta_std,
         }, f)
 
     # --- DataLoaders ---
@@ -198,13 +207,16 @@ def main():
         return PyGBatchWrapper(batch), batch.y
 
     bs = cfg['training']['batch_size']
+    num_workers = cfg['hardware']['num_workers']
     train_loader = data.DataLoader(
         graph_dataset, batch_size=bs, collate_fn=collate_fn,
         sampler=data.SubsetRandomSampler(idx_train), drop_last=True,
+        num_workers=num_workers,
     )
     val_loader = data.DataLoader(
         graph_dataset, batch_size=bs, collate_fn=collate_fn,
         sampler=data.SubsetRandomSampler(idx_val),
+        num_workers=num_workers,
     )
     loader = TorchLoader(train_loader, val_loader)
 
