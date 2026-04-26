@@ -30,7 +30,7 @@ training:
   batch_size: 256
   learning_rate: 0.0003
   weight_decay: 0.0
-  stop_after_epochs: 30
+  stop_after_epochs: 1500
   clip_max_norm: 5
   max_epochs: 1500
   lr_scheduler: CosineAnnealingLR
