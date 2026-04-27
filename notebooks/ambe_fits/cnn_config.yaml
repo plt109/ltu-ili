@@ -1,0 +1,41 @@
+# cnn_config.yaml
+# 2D density histogram (cs1, log10_cs2) -> CNN -> embedding + n_events_norm -> NSF
+# NSF input dim: output_size + 1  (CNN embedding + z-normed n_events)
+save_base: 3_param_trained_models/cnn_sweep
+
+wandb:
+  project: my-sbi-project
+  entity: plt109
+
+data:
+  base_dir: /home/puehlengt/appletree/notebooks
+  fname: harvested_testsims_3params.npy
+  num_samples: 50000
+
+cnn:
+  channels: [8, 16]    # per-layer filter counts; 2 conv+pool layers
+  output_size: 8         # CNN FC output dim; actual NSF input = output_size + 1
+
+histogram:
+  n_bins: 50
+  cs1_range: [0, 150]
+  log_cs2_range: [2.1, 4.1]
+
+model:
+  type: nsf
+  hidden_features: 32
+  num_transforms: 3
+
+hardware:
+  cuda_device: 1
+  num_workers: 8
+
+training:
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  stop_after_epochs: 1500
+  clip_max_norm: 5
+  max_epochs: 1500
+  lr_scheduler: CosineAnnealingLR
+  checkpoint_every: 100
