@@ -1,0 +1,40 @@
+# hybrid5_deepset_config.yaml
+# DeepSet (out_channels-dim) concatenated with 5 hand-crafted stats
+# [mean(z_cS1), std(z_cS1), mean(z_log10_cS2), std(z_log10_cS2), n_events] -> NSF
+# Total embedding fed to NSF: output_size + 5
+save_base: 3_param_trained_models/deepset_sweep
+
+wandb:
+  project: my-sbi-project
+  entity: plt109
+
+data:
+  base_dir: /home/puehlengt/appletree/notebooks
+  fname: harvested_testsims_3params.npy
+  prebuilt_fname: pyg_dataset_raw_3params.pt
+  num_samples: 50000
+
+embedding:
+  in_channels: 2
+  output_size: 8   # DeepSet-only dims; actual NSF input = output_size + 5
+  hidden_layers: 2
+  hidden_size: 32
+
+model:
+  type: nsf
+  hidden_features: 32
+  num_transforms: 3
+
+hardware:
+  cuda_device: 3
+  num_workers: 0  # >0 requires data loading refactor (numpy arrays instead of PyG objects)
+
+training:
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  stop_after_epochs: 1500
+  clip_max_norm: 5
+  max_epochs: 1500
+  lr_scheduler: CosineAnnealingLR
+  checkpoint_every: 100
