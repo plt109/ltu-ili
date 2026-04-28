@@ -1,0 +1,46 @@
+# hybrid5_6params_config.yaml
+# DeepSet (out_channels-dim) + 5 hand-crafted stats -> NSF, 6 free params
+# g1, g2, ambe_nr_rate, alpha, beta, epsilon
+save_base: 6_param_trained_models/deepset_sweep
+
+wandb:
+  project: my-sbi-project
+  entity: plt109
+
+data:
+  base_dir: /home/puehlengt/appletree/notebooks
+  fname: harvested_testsims_6params.npy
+  prebuilt_fname: pyg_dataset_raw_6params.pt
+  num_samples: 50000
+
+embedding:
+  in_channels: 2
+  output_size: 8   # DeepSet-only dims; actual NSF input = output_size + 5
+  hidden_layers: 2
+  hidden_size: 32
+
+model:
+  type: nsf
+  hidden_features: 64
+  num_transforms: 5
+
+hardware:
+  cuda_device: 4
+  num_workers: 0
+
+training:
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  clip_max_norm: 5
+  checkpoint_every: 100
+  # --- ReduceLROnPlateau ---
+  lr_scheduler: ReduceLROnPlateau
+  lr_decay_factor: 0.5
+  lr_patience: 10
+  stop_after_epochs: 30
+  max_epochs: 10000
+  # --- CosineAnnealingLR ---
+  # lr_scheduler: CosineAnnealingLR
+  # stop_after_epochs: 1500
+  # max_epochs: 1500
