@@ -14,7 +14,7 @@ data:
 
 cnn:
   channels: [8, 16]    # per-layer filter counts; 2 conv+pool layers
-  output_size: 8         # CNN FC output dim; actual NSF input = output_size + 1
+  output_size: 16        # CNN FC output dim; actual NSF input = output_size + 1
 
 histogram:
   n_bins: 50
@@ -27,15 +27,20 @@ model:
   num_transforms: 3
 
 hardware:
-  cuda_device: 1
+  cuda_device: 5
   num_workers: 8
 
 training:
   batch_size: 256
   learning_rate: 0.0003
   weight_decay: 0.0
-  stop_after_epochs: 1500
   clip_max_norm: 5
-  max_epochs: 1500
-  lr_scheduler: CosineAnnealingLR
   checkpoint_every: 100
+  # lr_scheduler: CosineAnnealingLR
+  # stop_after_epochs: 1500
+  # max_epochs: 1500
+  lr_scheduler: ReduceLROnPlateau
+  lr_decay_factor: 0.5
+  lr_patience: 10
+  stop_after_epochs: 30
+  max_epochs: 10000
