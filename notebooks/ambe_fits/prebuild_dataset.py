@@ -8,8 +8,9 @@ import numpy as np
 import torch
 from torch_geometric.data import Data as PYGData
 
-FNAME = '/home/puehlengt/appletree/notebooks/harvested_testsims_3params.npy'
-OUT   = '/home/puehlengt/appletree/notebooks/pyg_dataset_raw_3params.pt'
+FLAVOUR = '6params'
+FNAME = f'/home/puehlengt/appletree/notebooks/harvested_testsims_{FLAVOUR}.npy'
+OUT   = f'/home/puehlengt/appletree/notebooks/pyg_dataset_raw_{FLAVOUR}.pt'
 
 # %% [markdown]
 # ## Load raw data
