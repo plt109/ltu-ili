@@ -27,11 +27,6 @@ apt_param_config = {
         "init_mean": 16.85, "init_std": 0.46,
         "allowed_range": [0, 100.0],
     },
-    "ambe_nr_rate": {
-        "prior_args": {},
-        "init_mean": 5500, "init_std": 100,
-        "allowed_range": [0, 10000000000.0],
-    },
     "alpha": {
         "prior_args": {"mean": 11.0, "std": 2.0},
         "init_mean": 11.0, "init_std": 2.0,
@@ -46,6 +41,11 @@ apt_param_config = {
         "prior_args": {"mean": 12.6, "std": 3.4},
         "init_mean": 12.6, "init_std": 3.4,
         "allowed_range": [1e-10, 10000000000.0],
+    },
+    "ambe_nr_rate": {
+        "prior_args": {},
+        "init_mean": 5500, "init_std": 100,
+        "allowed_range": [0, 10000000000.0],
     },
 }
 
