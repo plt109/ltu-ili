@@ -131,10 +131,19 @@ class PyGBatchWrapper:
 
 
 class WandbLampeRunner(LampeRunner):
-    def __init__(self, *args, checkpoint_every=10, resume_epoch=0, **kwargs):
+    def __init__(self, *args, checkpoint_every=10, resume_epoch=0, resume_checkpoint=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._epoch = resume_epoch
         self._checkpoint_every = checkpoint_every
+        if resume_checkpoint is not None:
+            _orig = self.nets[0]
+            _path = resume_checkpoint
+            _dev  = self.device
+            def _resumed(train_loader, prior):
+                model = _orig(train_loader, prior)
+                model.load_state_dict(torch.load(_path, map_location=_dev, weights_only=True))
+                return model
+            self.nets[0] = _resumed
 
     def _train_epoch(self, model, train_loader, val_loader, stepper):
         loss_train, loss_val = super()._train_epoch(model, train_loader, val_loader, stepper)
@@ -306,15 +315,8 @@ def main():
         checkpoint_path = resume_cfg['checkpoint']
         resume_epoch = int(resume_cfg['epoch'])
         cfg['training']['learning_rate'] = resume_cfg['lr']
-        _orig_net = nets[0]
-        def _make_resumed(factory, path, dev):
-            def _resumed(train_loader, prior):
-                model = factory(train_loader, prior)
-                model.load_state_dict(torch.load(path, map_location=dev, weights_only=True))
-                return model
-            return _resumed
-        nets[0] = _make_resumed(_orig_net, checkpoint_path, device)
     else:
+        checkpoint_path = None
         resume_epoch = 0
 
     # --- Train ---
@@ -322,6 +324,7 @@ def main():
         prior=prior, nets=nets, device=device,
         checkpoint_every=cfg['training'].get('checkpoint_every', 10),
         resume_epoch=resume_epoch,
+        resume_checkpoint=checkpoint_path,
         train_args={
             'training_batch_size': bs,
             'learning_rate': cfg['training']['learning_rate'],
