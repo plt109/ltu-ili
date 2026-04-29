@@ -131,9 +131,9 @@ class PyGBatchWrapper:
 
 
 class WandbLampeRunner(LampeRunner):
-    def __init__(self, *args, checkpoint_every=10, **kwargs):
+    def __init__(self, *args, checkpoint_every=10, resume_epoch=0, **kwargs):
         super().__init__(*args, **kwargs)
-        self._epoch = 0
+        self._epoch = resume_epoch
         self._checkpoint_every = checkpoint_every
 
     def _train_epoch(self, model, train_loader, val_loader, stepper):
@@ -297,10 +297,25 @@ def main():
         )
     ]
 
+    # --- Resume from checkpoint ---
+    resume_cfg = cfg.get('resume', {})
+    checkpoint_path = resume_cfg.get('checkpoint')
+    resume_epoch = int(resume_cfg.get('epoch', 0))
+    if checkpoint_path:
+        _orig_net = nets[0]
+        def _make_resumed(factory, path, dev):
+            def _resumed(train_loader, prior):
+                model = factory(train_loader, prior)
+                model.load_state_dict(torch.load(path, map_location=dev, weights_only=True))
+                return model
+            return _resumed
+        nets[0] = _make_resumed(_orig_net, checkpoint_path, device)
+
     # --- Train ---
     runner = WandbLampeRunner(
         prior=prior, nets=nets, device=device,
         checkpoint_every=cfg['training'].get('checkpoint_every', 10),
+        resume_epoch=resume_epoch,
         train_args={
             'training_batch_size': bs,
             'learning_rate': cfg['training']['learning_rate'],

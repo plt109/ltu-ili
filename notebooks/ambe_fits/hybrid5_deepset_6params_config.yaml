@@ -13,11 +13,25 @@ data:
   prebuilt_fname: pyg_dataset_raw_6params.pt
   num_samples: 50000
 
+# resume: (uncomment one block when resuming from checkpoint; omit entirely for cold start)
+# hs32 hl3 (gpu0) — lr 2.34e-6, epoch 300
+# resume:
+#   checkpoint: 6_param_trained_models/deepset_sweep/50000totalsamples_hybrid5_deepset_nsf_h64_t5_emb_hs32_hl3_lr0.0003_ReduceLROnPlateau/checkpoint_epoch300.pt
+#   epoch: 300
+# hs64 hl2 (gpu1) — lr 9.37e-6, epoch 200
+# resume:
+#   checkpoint: 6_param_trained_models/deepset_sweep/50000totalsamples_hybrid5_deepset_nsf_h64_t5_emb_hs64_hl2_lr0.0003_ReduceLROnPlateau/checkpoint_epoch200.pt
+#   epoch: 200
+# hs64 hl3 (gpu2) — lr 3.75e-5, epoch 200
+# resume:
+#   checkpoint: 6_param_trained_models/deepset_sweep/50000totalsamples_hybrid5_deepset_nsf_h64_t5_emb_hs64_hl3_lr0.0003_ReduceLROnPlateau/checkpoint_epoch200.pt
+#   epoch: 200
+
 embedding:
   in_channels: 2
   output_size: 8   # DeepSet-only dims; actual NSF input = output_size + 5
   hidden_layers: 2
-  hidden_size: 32
+  hidden_size: 64
 
 model:
   type: nsf
@@ -25,7 +39,7 @@ model:
   num_transforms: 5
 
 hardware:
-  cuda_device: 4
+  cuda_device: 2
   num_workers: 0
 
 training:
