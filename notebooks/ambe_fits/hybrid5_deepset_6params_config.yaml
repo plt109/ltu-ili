@@ -44,7 +44,8 @@ hardware:
 
 training:
   batch_size: 256
-  learning_rate: 0.0003
+  #learning_rate: 0.0003
+  learning_rate: 2.34e-6
   weight_decay: 0.0
   clip_max_norm: 5
   checkpoint_every: 100
