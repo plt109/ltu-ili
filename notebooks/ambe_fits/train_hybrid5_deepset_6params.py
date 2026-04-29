@@ -299,9 +299,13 @@ def main():
 
     # --- Resume from checkpoint ---
     resume_cfg = cfg.get('resume', {})
-    checkpoint_path = resume_cfg.get('checkpoint')
-    resume_epoch = int(resume_cfg.get('epoch', 0))
-    if checkpoint_path:
+    if resume_cfg:
+        missing = [k for k in ('checkpoint', 'epoch', 'lr') if k not in resume_cfg]
+        if missing:
+            raise ValueError(f"resume block is missing required fields: {missing}")
+        checkpoint_path = resume_cfg['checkpoint']
+        resume_epoch = int(resume_cfg['epoch'])
+        cfg['training']['learning_rate'] = resume_cfg['lr']
         _orig_net = nets[0]
         def _make_resumed(factory, path, dev):
             def _resumed(train_loader, prior):
@@ -310,6 +314,8 @@ def main():
                 return model
             return _resumed
         nets[0] = _make_resumed(_orig_net, checkpoint_path, device)
+    else:
+        resume_epoch = 0
 
     # --- Train ---
     runner = WandbLampeRunner(
