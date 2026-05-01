@@ -233,7 +233,6 @@ def main():
     print(f'Loading training data from {train_fname} ({num_samples} sims)...')
     dataset, param_names = load_dataset_from_hdf5(train_fname, num_samples)
     print(f'Loading test data from {test_fname} ({N_TEST2} sims)...')
-    dataset_test2, _     = load_dataset_from_hdf5(test_fname, N_TEST2)
     dataset_test2, param_names_chk     = load_dataset_from_hdf5(test_fname, N_TEST2)
     assert param_names==param_names_chk, 'Fatal: param_names from train and test datasets do not match!'
 
