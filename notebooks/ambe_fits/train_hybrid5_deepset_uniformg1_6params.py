@@ -234,7 +234,7 @@ def main():
     device = torch.device(f"cuda:{cfg['hardware']['cuda_device']}")
 
     num_samples = cfg['data']['num_samples']
-    N_TEST2     = cfg['data'].get('n_test', 20000)
+    N_TEST2     = cfg['data'].get('n_test', 2000)
 
     # --- Load datasets ---
     train_fname = f"{cfg['data']['train_dir']}/{cfg['data']['train_fname']}"

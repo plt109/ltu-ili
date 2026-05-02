@@ -36,7 +36,7 @@ model:
   num_transforms: 5
 
 hardware:
-  cuda_device: 4  # set before launching
+  cuda_device: 5  # set before launching
   num_workers: 0  # >0 requires data loading refactor
 
 training:
