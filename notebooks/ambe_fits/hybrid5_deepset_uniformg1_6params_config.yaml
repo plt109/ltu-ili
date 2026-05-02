@@ -36,15 +36,15 @@ model:
   num_transforms: 5
 
 hardware:
-  cuda_device: 2  # set before launching
+  cuda_device: 4  # set before launching
   num_workers: 0  # >0 requires data loading refactor
 
 training:
   batch_size: 256
   learning_rate: 0.0003
   weight_decay: 0.0
-  stop_after_epochs: 1500
+  stop_after_epochs: 50
   clip_max_norm: 5
-  max_epochs: 1500
+  max_epochs: 50
   lr_scheduler: CosineAnnealingLR
-  checkpoint_every: 100
+  checkpoint_every: 10
