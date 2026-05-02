@@ -15,7 +15,7 @@ data:
   test_dir: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/test_set
   test_fname: harvested_test.h5
   test_prior_json: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/test_set/prior_harvested_test.json
-  num_samples: 500
+  num_samples: 50000
   n_test: 2000
 
 # resume: (uncomment when resuming from checkpoint; omit entirely for cold start)
@@ -43,8 +43,8 @@ training:
   batch_size: 256
   learning_rate: 0.0003
   weight_decay: 0.0
-  stop_after_epochs: 50
+  stop_after_epochs: 1500
   clip_max_norm: 5
-  max_epochs: 50
+  max_epochs: 1500
   lr_scheduler: CosineAnnealingLR
-  checkpoint_every: 10
+  checkpoint_every: 100
