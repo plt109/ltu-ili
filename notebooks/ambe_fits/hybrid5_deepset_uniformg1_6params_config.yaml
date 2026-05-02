@@ -1,0 +1,50 @@
+# hybrid5_deepset_uniformg1_6params_config.yaml
+# Wide-proposal experiment: training sims drawn from uniform g1 [0.12, 0.14]
+# Inference prior: tight Gaussian g1 (std=0.001)
+# runner_lampe.py computes pi(theta)/p_tilde(theta) reweighting automatically
+save_base: 6_param_trained_models/deepset_uniformg1
+
+wandb:
+  project: my-sbi-project
+  entity: plt109
+
+data:
+  train_dir: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/training_set
+  train_fname: harvested_training.h5
+  train_prior_json: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/training_set/prior_harvested_training.json
+  test_dir: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/test_set
+  test_fname: harvested_test.h5
+  test_prior_json: /home/puehlengt/appletree/notebooks/6_params_uniform_g1/test_set/prior_harvested_test.json
+  num_samples: 500
+  n_test: 2000
+
+# resume: (uncomment when resuming from checkpoint; omit entirely for cold start)
+# resume:
+#   checkpoint: 6_param_trained_models/deepset_uniformg1/<out_dir>/checkpoint_epochN.pt
+#   epoch: N
+#   lr: <lr_at_checkpoint>
+
+embedding:
+  in_channels: 2
+  output_size: 8   # DeepSet-only dims; actual NSF input = output_size + 5
+  hidden_layers: 3
+  hidden_size: 64
+
+model:
+  type: nsf
+  hidden_features: 64
+  num_transforms: 5
+
+hardware:
+  cuda_device: 2  # set before launching
+  num_workers: 0  # >0 requires data loading refactor
+
+training:
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  stop_after_epochs: 1500
+  clip_max_norm: 5
+  max_epochs: 1500
+  lr_scheduler: CosineAnnealingLR
+  checkpoint_every: 100
