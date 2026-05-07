@@ -14,7 +14,7 @@ data:
   test_dir: /home/puehlengt/appletree/notebooks/1_param/test_set
   test_fname: harvested_testing_normg1.h5
   test_prior_json: /home/puehlengt/appletree/notebooks/1_param/test_set/prior_harvested_testing_normg1.json
-  num_samples: 500
+  num_samples: 198000
   n_test: 2000
 
 model:
