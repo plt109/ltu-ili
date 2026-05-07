@@ -1,0 +1,39 @@
+# g1-only: median(log10(cs2)) per cs1 bin (10 bins), Gaussian proposal
+run_tag: gaussian_proposal_cs1bin10_medlogcs2
+
+save_base: 1_param_trained_models/cs1bin10_medlogcs2/gaussian_proposal
+
+wandb:
+  project: my-sbi-project
+  entity: plt109
+
+data:
+  train_dir: /home/puehlengt/appletree/notebooks/1_param/training_set/normg1
+  train_fname: harvested_training_normg1.h5
+  train_prior_json: /home/puehlengt/appletree/notebooks/1_param/training_set/normg1/prior_harvested_training_normg1.json
+  test_dir: /home/puehlengt/appletree/notebooks/1_param/test_set
+  test_fname: harvested_testing_normg1.h5
+  test_prior_json: /home/puehlengt/appletree/notebooks/1_param/test_set/prior_harvested_testing_normg1.json
+  num_samples: 50000
+  n_test: 2000
+
+model:
+  type: nsf
+  hidden_features: 32
+  num_transforms: 3
+
+hardware:
+  cuda_device: 2
+  num_workers: 8
+
+training:
+  batch_size: 256
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  stop_after_epochs: 50
+  clip_max_norm: 5
+  max_epochs: 1500
+  lr_scheduler: ReduceLROnPlateau
+  lr_decay_factor: 0.5
+  lr_patience: 10
+  checkpoint_every: 50
