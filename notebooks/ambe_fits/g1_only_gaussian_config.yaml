@@ -2,7 +2,7 @@
 # Both train and test sims drawn from Gaussian g1 (std=0.001). No reweighting.
 run_tag: gaussian_proposal
 
-save_base: 1_param_trained_models/g1_only/gaussian_proposal
+save_base: 1_param_trained_models/mean_std_cs1/gaussian_proposal
 
 wandb:
   project: my-sbi-project

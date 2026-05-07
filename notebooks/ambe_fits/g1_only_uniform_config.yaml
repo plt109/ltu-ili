@@ -2,7 +2,7 @@
 # runner_lampe.py applies pi(theta)/p_tilde(theta) reweighting automatically.
 run_tag: uniform_proposal
 
-save_base: 1_param_trained_models/g1_only/uniform_proposal
+save_base: 1_param_trained_models/mean_std_cs1/uniform_proposal
 
 wandb:
   project: my-sbi-project
